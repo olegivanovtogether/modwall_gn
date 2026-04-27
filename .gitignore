@@ -5,3 +5,4 @@ __pycache__/
 *.blend1
 *.zip
 .DS_Store
+.claude/
