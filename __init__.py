@@ -92,6 +92,54 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_size_x, tile_size_y, rotation_deg):
     return stats
 
 
+# ── Seam processing ───────────────────────────────────────────────────────────
+
+def _process_seams(bm, ts_x, ts_y, angle_deg):
+    tol = 0.0005
+    corner_rad = math.radians(angle_deg)
+
+    to_dissolve = []
+
+    for edge in bm.edges:
+        # Boundary: край меша або край отвору — завжди seam, не чіпати
+        if len(edge.link_faces) != 2:
+            edge.seam = True
+            continue
+
+        # Різкий кут між двома face — seam, залишити
+        if edge.calc_face_angle(0.0) > corner_rad:
+            edge.seam = True
+            continue
+
+        v0, v1 = edge.verts
+
+        # Grid-розріз по X: обидві вершини на одній X-площині (n * ts_x)
+        x0 = round(v0.co.x / ts_x)
+        x1 = round(v1.co.x / ts_x)
+        if (x0 == x1
+                and abs(v0.co.x - x0 * ts_x) < tol
+                and abs(v1.co.x - x1 * ts_x) < tol):
+            edge.seam = True
+            continue
+
+        # Grid-розріз по Z: обидві вершини на одній Z-площині (n * ts_y)
+        z0 = round(v0.co.z / ts_y)
+        z1 = round(v1.co.z / ts_y)
+        if (z0 == z1
+                and abs(v0.co.z - z0 * ts_y) < tol
+                and abs(v1.co.z - z1 * ts_y) < tol):
+            edge.seam = True
+            continue
+
+        # Не підпав ні під одне правило → dissolve
+        edge.seam = False
+        to_dissolve.append(edge)
+
+    if to_dissolve:
+        bmesh.ops.dissolve_edges(bm, edges=to_dissolve,
+                                 use_verts=True, use_face_split=False)
+
+
 # ── Properties ────────────────────────────────────────────────────────────────
 
 def _poll_mesh(self, obj):
@@ -132,6 +180,17 @@ class TC_Settings(PropertyGroup):
         name="Duplicate Before Apply",
         description="Work on a copy; original mesh is left untouched",
         default=True,
+    )
+    mark_seams: BoolProperty(
+        name="Mark Seams & Dissolve",
+        description="Mark seams on tile borders / sharp corners / boundary edges, dissolve the rest",
+        default=False,
+    )
+    seam_angle: FloatProperty(
+        name="Corner Angle",
+        description="Edges sharper than this angle get a seam",
+        default=45.0, min=0.0, max=180.0,
+        subtype='NONE', unit='NONE',
     )
 
 
@@ -184,6 +243,9 @@ class TC_OT_Apply(Operator):
             s.rotation,
         )
 
+        if s.mark_seams:
+            _process_seams(bm, ts_x, ts_y, s.seam_angle)
+
         bm.to_mesh(work_obj.data)
         bm.free()
         work_obj.data.update()
@@ -232,6 +294,11 @@ class TC_PT_Main(Panel):
 
         layout.prop(s, "rotation")
         layout.prop(s, "duplicate_before_apply")
+
+        layout.separator()
+        layout.prop(s, "mark_seams")
+        if s.mark_seams:
+            layout.prop(s, "seam_angle", text="Corner Angle (°)")
 
         layout.separator()
         row = layout.row()
