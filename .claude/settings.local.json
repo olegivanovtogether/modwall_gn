@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//e/Develop/BlenderAddon/**)",
+      "Bash(python -c ' *)",
+      "WebFetch(domain:b3d.interplanety.org)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:docs.blender.org)",
+      "WebFetch(domain:behreajj.medium.com)",
+      "Bash(git -C \"E:/Develop/BlenderAddon/modwall_gn\" status)",
+      "Bash(git --version)",
+      "Bash(gh auth *)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(gh repo *)",
+      "Bash(git push *)"
+    ]
+  }
+}
