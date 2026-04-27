@@ -24,6 +24,7 @@ def get_tile_bounds(tile_obj):
 def slice_mesh_with_grid(bm, tile_size):
     """
     Bisects the BMesh along X, Y, Z axes using the given tile_size step.
+    Returns a set of BMEdge objects created by the bisect operations.
     """
     # Bounding box to know where to cut
     min_v = Vector((float('inf'), float('inf'), float('inf')))
@@ -32,33 +33,40 @@ def slice_mesh_with_grid(bm, tile_size):
         for i in range(3):
             min_v[i] = min(min_v[i], v.co[i])
             max_v[i] = max(max_v[i], v.co[i])
-            
+
+    cut_edges = set()
+
     def bisect_axis(axis_idx, start_val, end_val, step):
         if step <= 0.001: return
-        
+
         start_mult = math.floor(start_val / step)
         end_mult = math.ceil(end_val / step)
-        
+
         for mult in range(start_mult, end_mult + 1):
             cut_val = mult * step
-            
+
             plane_co = Vector((0, 0, 0))
             plane_co[axis_idx] = cut_val
             plane_no = Vector((0, 0, 0))
             plane_no[axis_idx] = 1.0
-            
-            bmesh.ops.bisect_plane(
-                bm, 
+
+            result = bmesh.ops.bisect_plane(
+                bm,
                 geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
-                plane_co=plane_co, 
+                plane_co=plane_co,
                 plane_no=plane_no,
-                clear_inner=False, 
+                clear_inner=False,
                 clear_outer=False
             )
+            for elem in result['geom_cut']:
+                if isinstance(elem, bmesh.types.BMEdge):
+                    cut_edges.add(elem)
 
     bisect_axis(0, min_v.x, max_v.x, tile_size[0]) # X
     bisect_axis(2, min_v.z, max_v.z, tile_size[1]) # Z
     bisect_axis(1, min_v.y, max_v.y, tile_size[0]) # Y
+
+    return cut_edges
 
 def _classify_face_by_normal(face):
     """Fallback face type from normal when FaceType attribute is missing or invalid."""

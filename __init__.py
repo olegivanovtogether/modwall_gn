@@ -94,44 +94,29 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_size_x, tile_size_y, rotation_deg):
 
 # ── Seam processing ───────────────────────────────────────────────────────────
 
-def _process_seams(bm, ts_x, ts_y, angle_deg):
-    tol = 0.0005
+def _process_seams(bm, cut_edges, ts_x, ts_y, angle_deg):
     corner_rad = math.radians(angle_deg)
-
+    # Відфільтровуємо ребра що залишились валідними після remove_doubles
+    valid_cuts = {e for e in (cut_edges or set()) if e.is_valid}
     to_dissolve = []
 
     for edge in bm.edges:
-        # Boundary: край меша або край отвору — завжди seam, не чіпати
+        # Boundary: край меша або отвору — seam, не чіпати
         if len(edge.link_faces) != 2:
             edge.seam = True
             continue
 
-        # Різкий кут між двома face — seam, залишити
+        # Ребро створене bisect — однозначно seam
+        if edge in valid_cuts:
+            edge.seam = True
+            continue
+
+        # Різкий кут між face — seam, залишити
         if edge.calc_face_angle(0.0) > corner_rad:
             edge.seam = True
             continue
 
-        v0, v1 = edge.verts
-
-        # Grid-розріз по X: обидві вершини на одній X-площині (n * ts_x)
-        x0 = round(v0.co.x / ts_x)
-        x1 = round(v1.co.x / ts_x)
-        if (x0 == x1
-                and abs(v0.co.x - x0 * ts_x) < tol
-                and abs(v1.co.x - x1 * ts_x) < tol):
-            edge.seam = True
-            continue
-
-        # Grid-розріз по Z: обидві вершини на одній Z-площині (n * ts_y)
-        z0 = round(v0.co.z / ts_y)
-        z1 = round(v1.co.z / ts_y)
-        if (z0 == z1
-                and abs(v0.co.z - z0 * ts_y) < tol
-                and abs(v1.co.z - z1 * ts_y) < tol):
-            edge.seam = True
-            continue
-
-        # Не підпав ні під одне правило → dissolve
+        # Решта — dissolve
         edge.seam = False
         to_dissolve.append(edge)
 
@@ -233,18 +218,21 @@ class TC_OT_Apply(Operator):
         bm.from_mesh(work_obj.data)
 
         faces_before = len(bm.faces)
-        slice_mesh_with_grid(bm, (ts_x, ts_y))
+        cut_edges = slice_mesh_with_grid(bm, (ts_x, ts_y)) or set()
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
+
+        # Dissolve першим — спрощуємо топологію до фінального стану
+        if s.mark_seams:
+            _process_seams(bm, cut_edges, ts_x, ts_y, s.seam_angle)
+
         faces_after = len(bm.faces)
 
+        # UV призначається вже на чистій геометрії
         uv_stats = _apply_tile_uvs(
             bm, b_min, b_max,
             ts_x, ts_y,
             s.rotation,
         )
-
-        if s.mark_seams:
-            _process_seams(bm, ts_x, ts_y, s.seam_angle)
 
         bm.to_mesh(work_obj.data)
         bm.free()
