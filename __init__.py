@@ -94,31 +94,46 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_size_x, tile_size_y, rotation_deg):
 
 # ── Seam processing ───────────────────────────────────────────────────────────
 
-def _process_seams(bm, cut_edges, ts_x, ts_y, angle_deg):
+def _process_seams(bm, uv_layer, angle_deg):
+    """
+    Seams by UV discontinuity — найпростіший і найнадійніший підхід:
+    UV вже правильно лежить. Якщо у сусідніх faces різні UV в спільних
+    вершинах → межа тайла → seam. Потім dissolve незасімлених ребер.
+    """
     corner_rad = math.radians(angle_deg)
-    # Відфільтровуємо ребра що залишились валідними після remove_doubles
-    valid_cuts = {e for e in (cut_edges or set()) if e.is_valid}
+    tol = 0.001
     to_dissolve = []
 
     for edge in bm.edges:
-        # Boundary: край меша або отвору — seam, не чіпати
+        # Boundary: край меша або отвору
         if len(edge.link_faces) != 2:
             edge.seam = True
             continue
 
-        # Ребро створене bisect — однозначно seam
-        if edge in valid_cuts:
-            edge.seam = True
-            continue
-
-        # Різкий кут між face — seam, залишити
+        # Різкий кут між face
         if edge.calc_face_angle(0.0) > corner_rad:
             edge.seam = True
             continue
 
-        # Решта — dissolve
-        edge.seam = False
-        to_dissolve.append(edge)
+        # Порівнюємо UV в спільних вершинах між двома сусідніми face
+        f0, f1 = edge.link_faces
+        f0_uv = {l.vert: l[uv_layer].uv for l in f0.loops}
+        f1_uv = {l.vert: l[uv_layer].uv for l in f1.loops}
+
+        uv_differs = False
+        for v in edge.verts:
+            if v in f0_uv and v in f1_uv:
+                du = abs(f0_uv[v][0] - f1_uv[v][0])
+                dv = abs(f0_uv[v][1] - f1_uv[v][1])
+                if du > tol or dv > tol:
+                    uv_differs = True
+                    break
+
+        if uv_differs:
+            edge.seam = True
+        else:
+            edge.seam = False
+            to_dissolve.append(edge)
 
     if to_dissolve:
         bmesh.ops.dissolve_edges(bm, edges=to_dissolve,
@@ -218,21 +233,23 @@ class TC_OT_Apply(Operator):
         bm.from_mesh(work_obj.data)
 
         faces_before = len(bm.faces)
-        cut_edges = slice_mesh_with_grid(bm, (ts_x, ts_y)) or set()
+        slice_mesh_with_grid(bm, (ts_x, ts_y))
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
 
-        # Dissolve першим — спрощуємо топологію до фінального стану
-        if s.mark_seams:
-            _process_seams(bm, cut_edges, ts_x, ts_y, s.seam_angle)
-
-        faces_after = len(bm.faces)
-
-        # UV призначається вже на чистій геометрії
+        # UV призначається першим — seams будуть читати його
         uv_stats = _apply_tile_uvs(
             bm, b_min, b_max,
             ts_x, ts_y,
             s.rotation,
         )
+
+        # Seams по UV розривах + dissolve незасімлених ребер
+        if s.mark_seams:
+            uv_layer = bm.loops.layers.uv.get("UVMap")
+            if uv_layer:
+                _process_seams(bm, uv_layer, s.seam_angle)
+
+        faces_after = len(bm.faces)
 
         bm.to_mesh(work_obj.data)
         bm.free()
