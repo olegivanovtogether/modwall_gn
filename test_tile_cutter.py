@@ -37,7 +37,7 @@ def run_test():
     s.reference_tile = tile
     s.tile_size_x = 1.0
     s.tile_size_y = 1.0
-    s.rotation = '0'
+    s.rotation = 0.0
     s.duplicate_before_apply = True
 
     # Run

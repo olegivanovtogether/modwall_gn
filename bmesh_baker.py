@@ -21,9 +21,11 @@ def get_tile_bounds(tile_obj):
         
     return (min_u, min_v), (max_u, max_v)
 
-def slice_mesh_with_grid(bm, tile_size):
+def slice_mesh_with_grid(bm, tile_size, offset=(0.0, 0.0)):
     """
     Bisects the BMesh along X, Y, Z axes using the given tile_size step.
+    offset=(offset_x, offset_z) shifts the cut planes so the grid origin
+    matches the Projection Box location.
     Returns a set of BMEdge objects created by the bisect operations.
     """
     # Bounding box to know where to cut
@@ -36,14 +38,14 @@ def slice_mesh_with_grid(bm, tile_size):
 
     cut_edges = set()
 
-    def bisect_axis(axis_idx, start_val, end_val, step):
+    def bisect_axis(axis_idx, start_val, end_val, step, axis_offset=0.0):
         if step <= 0.001: return
 
-        start_mult = math.floor(start_val / step)
-        end_mult = math.ceil(end_val / step)
+        start_mult = math.floor((start_val - axis_offset) / step)
+        end_mult   = math.ceil( (end_val   - axis_offset) / step)
 
         for mult in range(start_mult, end_mult + 1):
-            cut_val = mult * step
+            cut_val = axis_offset + mult * step
 
             plane_co = Vector((0, 0, 0))
             plane_co[axis_idx] = cut_val
@@ -62,9 +64,9 @@ def slice_mesh_with_grid(bm, tile_size):
                 if isinstance(elem, bmesh.types.BMEdge):
                     cut_edges.add(elem)
 
-    bisect_axis(0, min_v.x, max_v.x, tile_size[0]) # X
-    bisect_axis(2, min_v.z, max_v.z, tile_size[1]) # Z
-    bisect_axis(1, min_v.y, max_v.y, tile_size[0]) # Y
+    bisect_axis(0, min_v.x, max_v.x, tile_size[0], offset[0])  # X
+    bisect_axis(2, min_v.z, max_v.z, tile_size[1], offset[1])  # Z
+    bisect_axis(1, min_v.y, max_v.y, tile_size[0], 0.0)        # Y
 
     return cut_edges
 

@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Simple Tile Cutter",
-    "version": (0, 2, 0),
+    "version": (0, 4, 0),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Cut any mesh with a tile grid and assign UV from a reference tile",
@@ -10,19 +10,32 @@ bl_info = {
 import bpy
 import bmesh
 import math
-from bpy.props import FloatProperty, BoolProperty, EnumProperty, PointerProperty
+import importlib
+from mathutils import Vector
+from bpy.props import FloatProperty, BoolProperty, PointerProperty
 from bpy.types import Panel, Operator, PropertyGroup
 
+from . import bmesh_baker
+importlib.reload(bmesh_baker)
 from .bmesh_baker import get_tile_bounds, slice_mesh_with_grid
 
 
 # ── UV projection ─────────────────────────────────────────────────────────────
+#
+# Box-projection model (same as UVW Map in 3ds Max):
+#   ax_x, ax_y, ax_z  — unit vectors of the box's local axes in target-local space
+#   box_origin        — box center in target-local space
+#   tile_u, tile_v    — tile sizes (= box.scale.x / .z)
+#
+# For each face we dot its normal against all three box axes to decide which
+# box-face it is most parallel to, then project vertices onto the two remaining
+# axes.  Rotation of the box rotates the axes → projection rotates with it.
 
-def _apply_tile_uvs(bm, b_min, b_max, tile_size_x, tile_size_y, rotation_deg):
+def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
+                    box_origin, ax_x, ax_y, ax_z):
     uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
-    ts_x = max(tile_size_x, 0.001)
-    ts_y = max(tile_size_y, 0.001)
-    rot = int(rotation_deg)
+    tile_u = max(tile_u, 0.001)
+    tile_v = max(tile_v, 0.001)
 
     stats = {'quads': 0, 'triangles': 0, 'ngons': 0}
 
@@ -32,62 +45,38 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_size_x, tile_size_y, rotation_deg):
         elif n == 4: stats['quads'] += 1
         else:        stats['ngons'] += 1
 
-        nx = abs(face.normal.x)
-        ny = abs(face.normal.y)
-        nz = abs(face.normal.z)
+        fn = face.normal
+        dot_x = abs(fn.dot(ax_x))
+        dot_y = abs(fn.dot(ax_y))
+        dot_z = abs(fn.dot(ax_z))
 
-        # Face center determines which tile cell this face belongs to.
-        # All vertices then offset relative to that cell → guaranteed [0,1].
-        # This fixes wrap-around distortion when per-vertex modulo crosses
-        # a tile boundary on the same face (0.99 → 0.01 interpolation artifact).
-        c = face.calc_center_median()
-
-        if ny >= nx and ny >= nz:
-            su = 1.0 if face.normal.y < 0 else -1.0
-            cu = math.floor(su * c.x / ts_x)
-            cv = math.floor(c.z / ts_y)
-            for loop in face.loops:
-                co = loop.vert.co
-                uf = (su * co.x - cu * ts_x) / ts_x
-                vf = (co.z   - cv * ts_y) / ts_y
-                uf = max(0.0, min(1.0, uf))
-                vf = max(0.0, min(1.0, vf))
-                if rot == 90:    uf, vf = 1.0 - vf, uf
-                elif rot == 180: uf, vf = 1.0 - uf, 1.0 - vf
-                elif rot == 270: uf, vf = vf, 1.0 - uf
-                loop[uv_layer].uv = (b_min[0] + uf * (b_max[0] - b_min[0]),
-                                     b_min[1] + vf * (b_max[1] - b_min[1]))
-
-        elif nz >= nx:
-            cu = math.floor(c.x / ts_x)
-            cv = math.floor(c.y / ts_y)
-            for loop in face.loops:
-                co = loop.vert.co
-                uf = (co.x - cu * ts_x) / ts_x
-                vf = (co.y - cv * ts_y) / ts_y
-                uf = max(0.0, min(1.0, uf))
-                vf = max(0.0, min(1.0, vf))
-                if rot == 90:    uf, vf = 1.0 - vf, uf
-                elif rot == 180: uf, vf = 1.0 - uf, 1.0 - vf
-                elif rot == 270: uf, vf = vf, 1.0 - uf
-                loop[uv_layer].uv = (b_min[0] + uf * (b_max[0] - b_min[0]),
-                                     b_min[1] + vf * (b_max[1] - b_min[1]))
-
+        # Which box face is this mesh face most parallel to?
+        if dot_y >= dot_x and dot_y >= dot_z:
+            # ≈ parallel to box XZ plane → project U along ax_x, V along ax_z
+            ua = -ax_x if fn.dot(ax_y) > 0 else ax_x
+            va = ax_z
+        elif dot_z >= dot_x:
+            # ≈ parallel to box XY plane → U along ax_x, V along ax_y
+            ua = ax_x
+            va = ax_y
         else:
-            su = 1.0 if face.normal.x > 0 else -1.0
-            cu = math.floor(su * c.y / ts_x)
-            cv = math.floor(c.z / ts_y)
-            for loop in face.loops:
-                co = loop.vert.co
-                uf = (su * co.y - cu * ts_x) / ts_x
-                vf = (co.z     - cv * ts_y) / ts_y
-                uf = max(0.0, min(1.0, uf))
-                vf = max(0.0, min(1.0, vf))
-                if rot == 90:    uf, vf = 1.0 - vf, uf
-                elif rot == 180: uf, vf = 1.0 - uf, 1.0 - vf
-                elif rot == 270: uf, vf = vf, 1.0 - uf
-                loop[uv_layer].uv = (b_min[0] + uf * (b_max[0] - b_min[0]),
-                                     b_min[1] + vf * (b_max[1] - b_min[1]))
+            # ≈ parallel to box YZ plane → U along ax_y, V along ax_z
+            ua = -ax_y if fn.dot(ax_x) < 0 else ax_y
+            va = ax_z
+
+        # Face center → tile cell (keeps all verts of one face in same cell)
+        c = face.calc_center_median() - box_origin
+        cu = math.floor(c.dot(ua) / tile_u)
+        cv = math.floor(c.dot(va) / tile_v)
+
+        for loop in face.loops:
+            p  = loop.vert.co - box_origin
+            pu = p.dot(ua)
+            pv = p.dot(va)
+            uf = max(0.0, min(1.0, (pu - cu * tile_u) / tile_u))
+            vf = max(0.0, min(1.0, (pv - cv * tile_v) / tile_v))
+            loop[uv_layer].uv = (b_min[0] + uf * (b_max[0] - b_min[0]),
+                                 b_min[1] + vf * (b_max[1] - b_min[1]))
 
     return stats
 
@@ -95,27 +84,18 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_size_x, tile_size_y, rotation_deg):
 # ── Seam processing ───────────────────────────────────────────────────────────
 
 def _process_seams(bm, uv_layer, angle_deg):
-    """
-    Seams by UV discontinuity — найпростіший і найнадійніший підхід:
-    UV вже правильно лежить. Якщо у сусідніх faces різні UV в спільних
-    вершинах → межа тайла → seam. Потім dissolve незасімлених ребер.
-    """
     corner_rad = math.radians(angle_deg)
     tol = 0.001
     to_dissolve = []
 
     for edge in bm.edges:
-        # Boundary: край меша або отвору
         if len(edge.link_faces) != 2:
             edge.seam = True
             continue
-
-        # Різкий кут між face
         if edge.calc_face_angle(0.0) > corner_rad:
             edge.seam = True
             continue
 
-        # Порівнюємо UV в спільних вершинах між двома сусідніми face
         f0, f1 = edge.link_faces
         f0_uv = {l.vert: l[uv_layer].uv for l in f0.loops}
         f1_uv = {l.vert: l[uv_layer].uv for l in f1.loops}
@@ -140,21 +120,77 @@ def _process_seams(bm, uv_layer, angle_deg):
                                  use_verts=True, use_face_split=False)
 
 
+# ── Projection Box helpers ────────────────────────────────────────────────────
+
+def _tile_size_from_settings(s):
+    ts_x = s.tile_size_x
+    ts_y = s.tile_size_y
+    ref = s.reference_tile
+    if ref is not None:
+        if ref.dimensions.x > 0.001: ts_x = ref.dimensions.x
+        if ref.dimensions.z > 0.001: ts_y = ref.dimensions.z
+        elif ref.dimensions.y > 0.001: ts_y = ref.dimensions.y
+    return ts_x, ts_y
+
+
+def _create_proj_box(context, s):
+    target = s.target_object
+    ts_x, ts_y = _tile_size_from_settings(s)
+
+    box_name = f"TC_Box_{target.name}"
+    box = bpy.data.objects.get(box_name)
+    if box is None:
+        box = bpy.data.objects.new(box_name, None)
+        box.empty_display_type = 'CUBE'
+        context.collection.objects.link(box)
+
+    box.parent = target
+    box.matrix_parent_inverse.identity()   # box lives in parent's local space
+    box.location       = (0.0, 0.0, 0.0)
+    box.rotation_euler = (0.0, 0.0, 0.0)
+    box.scale          = (ts_x, ts_x, ts_y)
+    box.hide_render    = True
+    s.proj_box = box
+
+
+def _delete_proj_box(s):
+    box = s.proj_box
+    if box is not None:
+        try:
+            bpy.data.objects.remove(box, do_unlink=True)
+        except Exception:
+            pass
+
+
+def _sync_proj_box(self, context):
+    s = context.scene.tc_settings
+    if s.target_object is not None and s.reference_tile is not None:
+        if s.proj_box is None:
+            _create_proj_box(context, s)
+    else:
+        if s.proj_box is not None:
+            _delete_proj_box(s)
+            s.proj_box = None
+
+
 # ── Properties ────────────────────────────────────────────────────────────────
 
 def _poll_mesh(self, obj):
     return obj.type == 'MESH'
+
 
 class TC_Settings(PropertyGroup):
     target_object: PointerProperty(
         name="Target Wall",
         type=bpy.types.Object,
         poll=_poll_mesh,
+        update=_sync_proj_box,
     )
     reference_tile: PointerProperty(
         name="Reference Tile",
         type=bpy.types.Object,
         poll=_poll_mesh,
+        update=_sync_proj_box,
     )
     tile_size_x: FloatProperty(
         name="Tile Size X",
@@ -166,15 +202,10 @@ class TC_Settings(PropertyGroup):
         default=0.25, min=0.001, max=100.0,
         unit='LENGTH',
     )
-    rotation: EnumProperty(
-        name="Rotation",
-        items=[
-            ('0',   "0°",   ""),
-            ('90',  "90°",  ""),
-            ('180', "180°", ""),
-            ('270', "270°", ""),
-        ],
-        default='0',
+    proj_box: PointerProperty(
+        name="Projection Box",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'EMPTY',
     )
     duplicate_before_apply: BoolProperty(
         name="Duplicate Before Apply",
@@ -194,7 +225,7 @@ class TC_Settings(PropertyGroup):
     )
 
 
-# ── Operator ──────────────────────────────────────────────────────────────────
+# ── Operator: Apply ───────────────────────────────────────────────────────────
 
 class TC_OT_Apply(Operator):
     bl_idname = "tilecutter.apply"
@@ -208,17 +239,39 @@ class TC_OT_Apply(Operator):
 
     def execute(self, context):
         s = context.scene.tc_settings
-        target = s.target_object
+        target   = s.target_object
         ref_tile = s.reference_tile
 
         b_min, b_max = get_tile_bounds(ref_tile)
 
-        # Tile size from reference object world dimensions; manual fields are fallback
         ts_x = ref_tile.dimensions.x
         ts_y = ref_tile.dimensions.z if ref_tile.dimensions.z > 0.001 else ref_tile.dimensions.y
         if ts_x < 0.001: ts_x = s.tile_size_x
         if ts_y < 0.001: ts_y = s.tile_size_y
 
+        # ── Read Projection Box: axes, origin, tile sizes ─────────────────────
+        # Default: world-aligned axes, no offset
+        ax_x = Vector((1.0, 0.0, 0.0))
+        ax_y = Vector((0.0, 1.0, 0.0))
+        ax_z = Vector((0.0, 0.0, 1.0))
+        box_origin = Vector((0.0, 0.0, 0.0))
+        tile_u = ts_x
+        tile_v = ts_y
+
+        box = s.proj_box
+        if box is not None and box.type == 'EMPTY':
+            local_mat  = target.matrix_world.inverted() @ box.matrix_world
+            scl        = local_mat.to_scale()
+            rot_mat    = local_mat.to_3x3()
+
+            ax_x = rot_mat.col[0].normalized()
+            ax_y = rot_mat.col[1].normalized()
+            ax_z = rot_mat.col[2].normalized()
+            box_origin = local_mat.to_translation()
+            tile_u     = max(abs(scl.x), 0.001)
+            tile_v     = max(abs(scl.z), 0.001)
+
+        # ── Duplicate or work in-place ────────────────────────────────────────
         if s.duplicate_before_apply:
             new_data = target.data.copy()
             work_obj = target.copy()
@@ -229,21 +282,21 @@ class TC_OT_Apply(Operator):
         else:
             work_obj = target
 
+        # ── BMesh processing ──────────────────────────────────────────────────
         bm = bmesh.new()
         bm.from_mesh(work_obj.data)
 
         faces_before = len(bm.faces)
-        slice_mesh_with_grid(bm, (ts_x, ts_y))
+        slice_mesh_with_grid(bm, (tile_u, tile_v),
+                             offset=(box_origin.x, box_origin.z))
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
 
-        # UV призначається першим — seams будуть читати його
         uv_stats = _apply_tile_uvs(
             bm, b_min, b_max,
-            ts_x, ts_y,
-            s.rotation,
+            tile_u, tile_v,
+            box_origin, ax_x, ax_y, ax_z,
         )
 
-        # Seams по UV розривах + dissolve незасімлених ребер
         if s.mark_seams:
             uv_layer = bm.loops.layers.uv.get("UVMap")
             if uv_layer:
@@ -255,7 +308,6 @@ class TC_OT_Apply(Operator):
         bm.free()
         work_obj.data.update()
 
-        # Transfer material from reference tile
         if ref_tile.data.materials:
             work_obj.data.materials.clear()
             for mat in ref_tile.data.materials:
@@ -265,14 +317,46 @@ class TC_OT_Apply(Operator):
         work_obj.select_set(True)
         context.view_layer.objects.active = work_obj
 
+        # ── Cleanup ───────────────────────────────────────────────────────────
+        _delete_proj_box(s)
+        s.proj_box       = None
+        s.target_object  = None
+        s.reference_tile = None
+
         self.report(
             {'INFO'},
             f"Done: {faces_before}→{faces_after} faces | "
-            f"tile:{ts_x:.3f}x{ts_y:.3f} | "
+            f"tile:{tile_u:.3f}x{tile_v:.3f} | "
             f"quads:{uv_stats['quads']} "
             f"tri:{uv_stats['triangles']} "
             f"ngon:{uv_stats['ngons']}"
         )
+        return {'FINISHED'}
+
+
+# ── Operator: Reset Projection Box ────────────────────────────────────────────
+
+class TC_OT_ResetProjBox(Operator):
+    bl_idname = "tilecutter.reset_proj_box"
+    bl_label = "Reset Proj Box"
+    bl_description = "Reset the Projection Box to the target wall's local origin with tile dimensions"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        s = context.scene.tc_settings
+        return s.proj_box is not None and s.proj_box.type == 'EMPTY'
+
+    def execute(self, context):
+        s = context.scene.tc_settings
+        box = s.proj_box
+        ts_x, ts_y = _tile_size_from_settings(s)
+
+        box.location       = (0.0, 0.0, 0.0)
+        box.rotation_euler = (0.0, 0.0, 0.0)
+        box.scale          = (ts_x, ts_x, ts_y)
+
+        self.report({'INFO'}, "Projection Box reset")
         return {'FINISHED'}
 
 
@@ -289,7 +373,7 @@ class TC_PT_Main(Panel):
         layout = self.layout
         s = context.scene.tc_settings
 
-        layout.prop(s, "target_object", icon='MESH_DATA')
+        layout.prop(s, "target_object",  icon='MESH_DATA')
         layout.prop(s, "reference_tile", icon='UV')
 
         layout.separator()
@@ -297,8 +381,13 @@ class TC_PT_Main(Panel):
         col.prop(s, "tile_size_x")
         col.prop(s, "tile_size_y")
 
-        layout.prop(s, "rotation")
         layout.prop(s, "duplicate_before_apply")
+
+        if s.proj_box is not None:
+            layout.separator()
+            layout.label(text="Proj Box: move / scale / rotate it")
+            layout.operator("tilecutter.reset_proj_box",
+                            text="Reset Proj Box", icon='LOOP_BACK')
 
         layout.separator()
         layout.prop(s, "mark_seams")
@@ -316,18 +405,22 @@ class TC_PT_Main(Panel):
 classes = (
     TC_Settings,
     TC_OT_Apply,
+    TC_OT_ResetProjBox,
     TC_PT_Main,
 )
+
 
 def register():
     for cls in classes:
         bpy.utils.register_class(cls)
     bpy.types.Scene.tc_settings = PointerProperty(type=TC_Settings)
 
+
 def unregister():
     for cls in reversed(classes):
         bpy.utils.unregister_class(cls)
     del bpy.types.Scene.tc_settings
+
 
 if __name__ == "__main__":
     register()
