@@ -21,36 +21,48 @@ def get_tile_bounds(tile_obj):
         
     return (min_u, min_v), (max_u, max_v)
 
-def slice_mesh_with_grid(bm, tile_size, offset=(0.0, 0.0)):
+def slice_mesh_with_grid(bm, tile_size, offset=(0.0, 0.0),
+                         origin=None, axes=None):
     """
-    Bisects the BMesh along X, Y, Z axes using the given tile_size step.
-    offset=(offset_x, offset_z) shifts the cut planes so the grid origin
-    matches the Projection Box location.
+    Bisects the BMesh along a tile grid.
+
+    By default this uses the local X/Y/Z axes. When origin and axes are passed,
+    cut planes are aligned to the Projection Box, so rotated grids cut and UV
+    project from the same coordinate system.
+
+    offset=(offset_x, offset_z) is kept for older callers and shifts the
+    default X/Z cut planes.
     Returns a set of BMEdge objects created by the bisect operations.
     """
-    # Bounding box to know where to cut
-    min_v = Vector((float('inf'), float('inf'), float('inf')))
-    max_v = Vector((float('-inf'), float('-inf'), float('-inf')))
-    for v in bm.verts:
-        for i in range(3):
-            min_v[i] = min(min_v[i], v.co[i])
-            max_v[i] = max(max_v[i], v.co[i])
+    if origin is None:
+        origin = Vector((offset[0], 0.0, offset[1]))
+    else:
+        origin = Vector(origin)
+
+    if axes is None:
+        axes = (
+            Vector((1.0, 0.0, 0.0)),
+            Vector((0.0, 1.0, 0.0)),
+            Vector((0.0, 0.0, 1.0)),
+        )
+    else:
+        axes = tuple(Vector(axis).normalized() for axis in axes)
 
     cut_edges = set()
 
-    def bisect_axis(axis_idx, start_val, end_val, step, axis_offset=0.0):
+    def bisect_axis(axis, step):
         if step <= 0.001: return
 
-        start_mult = math.floor((start_val - axis_offset) / step)
-        end_mult   = math.ceil( (end_val   - axis_offset) / step)
+        values = [(v.co - origin).dot(axis) for v in bm.verts]
+        if not values:
+            return
+
+        start_mult = math.floor(min(values) / step)
+        end_mult   = math.ceil(max(values) / step)
 
         for mult in range(start_mult, end_mult + 1):
-            cut_val = axis_offset + mult * step
-
-            plane_co = Vector((0, 0, 0))
-            plane_co[axis_idx] = cut_val
-            plane_no = Vector((0, 0, 0))
-            plane_no[axis_idx] = 1.0
+            plane_co = origin + axis * (mult * step)
+            plane_no = axis
 
             result = bmesh.ops.bisect_plane(
                 bm,
@@ -64,9 +76,10 @@ def slice_mesh_with_grid(bm, tile_size, offset=(0.0, 0.0)):
                 if isinstance(elem, bmesh.types.BMEdge):
                     cut_edges.add(elem)
 
-    bisect_axis(0, min_v.x, max_v.x, tile_size[0], offset[0])  # X
-    bisect_axis(2, min_v.z, max_v.z, tile_size[1], offset[1])  # Z
-    bisect_axis(1, min_v.y, max_v.y, tile_size[0], 0.0)        # Y
+    ax_x, ax_y, ax_z = axes
+    bisect_axis(ax_x, tile_size[0])  # tile width
+    bisect_axis(ax_z, tile_size[1])  # tile height
+    bisect_axis(ax_y, tile_size[0])  # side/reveal depth rhythm
 
     return cut_edges
 

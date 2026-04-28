@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Simple Tile Cutter",
-    "version": (0, 4, 1),
+    "version": (0, 4, 2),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Cut any mesh with a tile grid and assign UV from a reference tile",
@@ -134,9 +134,13 @@ def _tile_size_from_settings(s):
     return ts_x, ts_y
 
 
+def _set_proj_box_to_tile_size(box, s):
+    ts_x, ts_y = _tile_size_from_settings(s)
+    box.scale = (ts_x, ts_x, ts_y)
+
+
 def _create_proj_box(context, s):
     target = s.target_object
-    ts_x, ts_y = _tile_size_from_settings(s)
 
     box_name = f"TC_Box_{target.name}"
     box = bpy.data.objects.get(box_name)
@@ -149,7 +153,7 @@ def _create_proj_box(context, s):
     box.matrix_parent_inverse.identity()   # box lives in parent's local space
     box.location       = (0.0, 0.0, 0.0)
     box.rotation_euler = (0.0, 0.0, 0.0)
-    box.scale          = (ts_x, ts_x, ts_y)
+    _set_proj_box_to_tile_size(box, s)
     box.hide_render    = True
     s.proj_box = box
 
@@ -166,8 +170,13 @@ def _delete_proj_box(s):
 def _sync_proj_box(self, context):
     s = context.scene.tc_settings
     if s.target_object is not None and s.reference_tile is not None:
-        if s.proj_box is None:
+        if s.proj_box is None or s.proj_box.parent != s.target_object:
+            if s.proj_box is not None:
+                _delete_proj_box(s)
+                s.proj_box = None
             _create_proj_box(context, s)
+        else:
+            _set_proj_box_to_tile_size(s.proj_box, s)
     else:
         if s.proj_box is not None:
             _delete_proj_box(s)
@@ -202,11 +211,13 @@ class TC_Settings(PropertyGroup):
         name="Tile Size X",
         default=0.5, min=0.001, max=100.0,
         unit='LENGTH',
+        update=_sync_proj_box,
     )
     tile_size_y: FloatProperty(
         name="Tile Size Y",
         default=0.25, min=0.001, max=100.0,
         unit='LENGTH',
+        update=_sync_proj_box,
     )
     proj_box: PointerProperty(
         name="Projection Box",
@@ -299,8 +310,12 @@ class TC_OT_Apply(Operator):
         bm.from_mesh(work_obj.data)
 
         faces_before = len(bm.faces)
-        slice_mesh_with_grid(bm, (tile_u, tile_v),
-                             offset=(box_origin.x, box_origin.z))
+        slice_mesh_with_grid(
+            bm,
+            (tile_u, tile_v),
+            origin=box_origin,
+            axes=(ax_x, ax_y, ax_z),
+        )
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
 
         uv_stats = _apply_tile_uvs(
@@ -367,11 +382,10 @@ class TC_OT_ResetProjBox(Operator):
     def execute(self, context):
         s = context.scene.tc_settings
         box = s.proj_box
-        ts_x, ts_y = _tile_size_from_settings(s)
 
         box.location       = (0.0, 0.0, 0.0)
         box.rotation_euler = (0.0, 0.0, 0.0)
-        box.scale          = (ts_x, ts_x, ts_y)
+        _set_proj_box_to_tile_size(box, s)
 
         self.report({'INFO'}, "Projection Box reset")
         return {'FINISHED'}
