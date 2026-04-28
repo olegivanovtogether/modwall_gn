@@ -18,6 +18,7 @@
 - preview показується як напівпрозорий куб / паралелепіпед
 - preview співпадає з projection/cutting logic
 - preview зникає разом із Projection Box після Apply
+- polish preview протестовано: backface culling, щільніша прозорість, зелений wire-контур
 
 ---
 

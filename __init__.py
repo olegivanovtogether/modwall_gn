@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Simple Tile Cutter",
-    "version": (0, 4, 4),
+    "version": (0, 4, 5),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Cut any mesh with a tile grid and assign UV from a reference tile",
@@ -141,12 +141,12 @@ def _set_proj_box_to_tile_size(box, s):
     box.scale = (ts_x, ts_x, ts_y)
 
 
-def _make_material_transparent(mat, alpha=0.35):
+def _make_material_transparent(mat, alpha=0.55):
     mat.diffuse_color = (mat.diffuse_color[0], mat.diffuse_color[1],
                          mat.diffuse_color[2], alpha)
     mat.blend_method = 'BLEND'
     if hasattr(mat, "use_backface_culling"):
-        mat.use_backface_culling = False
+        mat.use_backface_culling = True
     if hasattr(mat, "show_transparent_back"):
         mat.show_transparent_back = True
     if hasattr(mat, "use_screen_refraction"):
@@ -175,25 +175,35 @@ def _preview_material(ref_tile):
         if mat is None:
             mat = src_mat.copy()
             mat.name = mat_name
-            _make_material_transparent(mat)
+        _make_material_transparent(mat)
         return mat
 
     mat = bpy.data.materials.get("TC_Tile_Preview_Material")
     if mat is None:
         mat = bpy.data.materials.new("TC_Tile_Preview_Material")
-        mat.diffuse_color = (0.2, 0.65, 1.0, 0.35)
+        mat.diffuse_color = (0.2, 0.65, 1.0, 0.55)
         mat.use_nodes = True
         bsdf = mat.node_tree.nodes.get("Principled BSDF")
         if bsdf is not None:
-            bsdf.inputs["Base Color"].default_value = (0.2, 0.65, 1.0, 0.35)
-            bsdf.inputs["Alpha"].default_value = 0.35
-        _make_material_transparent(mat)
+            bsdf.inputs["Base Color"].default_value = (0.2, 0.65, 1.0, 0.55)
+            bsdf.inputs["Alpha"].default_value = 0.55
+    _make_material_transparent(mat)
+    return mat
+
+
+def _wire_material():
+    mat = bpy.data.materials.get("TC_Tile_Preview_Wire_Material")
+    if mat is None:
+        mat = bpy.data.materials.new("TC_Tile_Preview_Wire_Material")
+        mat.diffuse_color = (0.0, 1.0, 0.1, 1.0)
     return mat
 
 
 def _delete_tile_preview(s):
-    preview = s.tile_preview
-    if preview is not None:
+    for attr in ("tile_preview", "tile_preview_wire"):
+        preview = getattr(s, attr)
+        if preview is None:
+            continue
         try:
             mesh = preview.data
             bpy.data.objects.remove(preview, do_unlink=True)
@@ -201,7 +211,7 @@ def _delete_tile_preview(s):
                 bpy.data.meshes.remove(mesh)
         except Exception:
             pass
-    s.tile_preview = None
+        setattr(s, attr, None)
 
 
 def _create_tile_preview(context, s):
@@ -276,6 +286,29 @@ def _create_tile_preview(context, s):
     preview.display_type = 'TEXTURED'
     preview.data.materials.append(_preview_material(s.reference_tile))
     s.tile_preview = preview
+
+    wire_mesh = bpy.data.meshes.new(f"TC_PreviewWireMesh_{box.name}")
+    edges = (
+        (0, 1), (1, 2), (2, 3), (3, 0),
+        (4, 5), (5, 6), (6, 7), (7, 4),
+        (0, 4), (1, 5), (2, 6), (3, 7),
+    )
+    wire_mesh.from_pydata(verts, edges, [])
+    wire_mesh.update(calc_edges=True)
+
+    wire = bpy.data.objects.new(f"TC_PreviewWire_{box.name}", wire_mesh)
+    context.collection.objects.link(wire)
+    wire.parent = box
+    wire.matrix_parent_inverse.identity()
+    wire.location = (0.0, 0.0, 0.0)
+    wire.rotation_euler = (0.0, 0.0, 0.0)
+    wire.scale = (1.0, 1.0, 1.0)
+    wire.hide_render = True
+    wire.hide_select = True
+    wire.display_type = 'WIRE'
+    wire.show_in_front = True
+    wire.data.materials.append(_wire_material())
+    s.tile_preview_wire = wire
 
 
 def _create_proj_box(context, s):
@@ -371,6 +404,11 @@ class TC_Settings(PropertyGroup):
     )
     tile_preview: PointerProperty(
         name="Tile Preview",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'MESH',
+    )
+    tile_preview_wire: PointerProperty(
+        name="Tile Preview Wire",
         type=bpy.types.Object,
         poll=lambda self, obj: obj.type == 'MESH',
     )
