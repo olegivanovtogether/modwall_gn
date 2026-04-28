@@ -1,9 +1,10 @@
 bl_info = {
     "name": "Simple Tile Cutter",
+    "author": "Oleh Strykitchenko",
     "version": (0, 4, 5),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
-    "description": "Cut any mesh with a tile grid and assign UV from a reference tile",
+    "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
     "category": "Mesh",
 }
 
@@ -595,6 +596,11 @@ class TC_PT_Main(Panel):
         layout = self.layout
         s = context.scene.tc_settings
 
+        info = layout.column(align=True)
+        info.label(text="Alpha mobile-game tiling tool.", icon='INFO')
+        info.label(text="Rectangular tiles work; square tiles are safer.")
+
+        layout.separator()
         layout.prop(s, "target_object",  icon='MESH_DATA')
         layout.prop(s, "reference_tile", icon='UV')
 
