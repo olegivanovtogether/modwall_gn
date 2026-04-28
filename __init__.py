@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Simple Tile Cutter",
-    "version": (0, 4, 0),
+    "version": (0, 4, 1),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Cut any mesh with a tile grid and assign UV from a reference tile",
@@ -83,7 +83,7 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
 
 # ── Seam processing ───────────────────────────────────────────────────────────
 
-def _process_seams(bm, uv_layer, angle_deg):
+def _process_seams(bm, uv_layer, angle_deg, dissolve_non_seamed_edges=False):
     corner_rad = math.radians(angle_deg)
     tol = 0.001
     to_dissolve = []
@@ -113,9 +113,10 @@ def _process_seams(bm, uv_layer, angle_deg):
             edge.seam = True
         else:
             edge.seam = False
-            to_dissolve.append(edge)
+            if dissolve_non_seamed_edges:
+                to_dissolve.append(edge)
 
-    if to_dissolve:
+    if dissolve_non_seamed_edges and to_dissolve:
         bmesh.ops.dissolve_edges(bm, edges=to_dissolve,
                                  use_verts=True, use_face_split=False)
 
@@ -179,6 +180,11 @@ def _poll_mesh(self, obj):
     return obj.type == 'MESH'
 
 
+def _sync_seam_options(self, context):
+    if not self.mark_seams:
+        self.dissolve_non_seamed_edges = False
+
+
 class TC_Settings(PropertyGroup):
     target_object: PointerProperty(
         name="Target Wall",
@@ -213,8 +219,14 @@ class TC_Settings(PropertyGroup):
         default=True,
     )
     mark_seams: BoolProperty(
-        name="Mark Seams & Dissolve",
-        description="Mark seams on tile borders / sharp corners / boundary edges, dissolve the rest",
+        name="Mark Seams",
+        description="Mark seams on tile borders / sharp corners / boundary edges",
+        default=False,
+        update=_sync_seam_options,
+    )
+    dissolve_non_seamed_edges: BoolProperty(
+        name="Dissolve non-seamed edges",
+        description="After marking seams, remove edges that were not marked as seams",
         default=False,
     )
     seam_angle: FloatProperty(
@@ -300,7 +312,12 @@ class TC_OT_Apply(Operator):
         if s.mark_seams:
             uv_layer = bm.loops.layers.uv.get("UVMap")
             if uv_layer:
-                _process_seams(bm, uv_layer, s.seam_angle)
+                _process_seams(
+                    bm,
+                    uv_layer,
+                    s.seam_angle,
+                    dissolve_non_seamed_edges=s.dissolve_non_seamed_edges,
+                )
 
         faces_after = len(bm.faces)
 
@@ -391,8 +408,10 @@ class TC_PT_Main(Panel):
 
         layout.separator()
         layout.prop(s, "mark_seams")
-        if s.mark_seams:
-            layout.prop(s, "seam_angle", text="Corner Angle (°)")
+        seam_col = layout.column(align=True)
+        seam_col.enabled = s.mark_seams
+        seam_col.prop(s, "dissolve_non_seamed_edges")
+        seam_col.prop(s, "seam_angle", text="Corner Angle (°)")
 
         layout.separator()
         row = layout.row()
