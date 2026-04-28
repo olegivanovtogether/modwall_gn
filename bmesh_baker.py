@@ -22,7 +22,7 @@ def get_tile_bounds(tile_obj):
     return (min_u, min_v), (max_u, max_v)
 
 def slice_mesh_with_grid(bm, tile_size, offset=(0.0, 0.0),
-                         origin=None, axes=None):
+                         origin=None, axes=None, center_origin=False):
     """
     Bisects the BMesh along a tile grid.
 
@@ -57,11 +57,16 @@ def slice_mesh_with_grid(bm, tile_size, offset=(0.0, 0.0),
         if not values:
             return
 
-        start_mult = math.floor(min(values) / step)
-        end_mult   = math.ceil(max(values) / step)
+        if center_origin:
+            start_mult = math.floor(min(values) / step - 0.5)
+            end_mult   = math.ceil(max(values) / step - 0.5)
+        else:
+            start_mult = math.floor(min(values) / step)
+            end_mult   = math.ceil(max(values) / step)
 
         for mult in range(start_mult, end_mult + 1):
-            plane_co = origin + axis * (mult * step)
+            dist = (mult + 0.5) * step if center_origin else mult * step
+            plane_co = origin + axis * dist
             plane_no = axis
 
             result = bmesh.ops.bisect_plane(

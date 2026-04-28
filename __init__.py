@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Simple Tile Cutter",
-    "version": (0, 4, 2),
+    "version": (0, 4, 4),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Cut any mesh with a tile grid and assign UV from a reference tile",
@@ -64,17 +64,19 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
             ua = -ax_y if fn.dot(ax_x) < 0 else ax_y
             va = ax_z
 
-        # Face center → tile cell (keeps all verts of one face in same cell)
+        # Face center → tile cell (keeps all verts of one face in same cell).
+        # Projection Box origin is the center of the preview tile, so cell
+        # boundaries live at half-tile offsets from the origin.
         c = face.calc_center_median() - box_origin
-        cu = math.floor(c.dot(ua) / tile_u)
-        cv = math.floor(c.dot(va) / tile_v)
+        cu = math.floor(c.dot(ua) / tile_u + 0.5)
+        cv = math.floor(c.dot(va) / tile_v + 0.5)
 
         for loop in face.loops:
             p  = loop.vert.co - box_origin
             pu = p.dot(ua)
             pv = p.dot(va)
-            uf = max(0.0, min(1.0, (pu - cu * tile_u) / tile_u))
-            vf = max(0.0, min(1.0, (pv - cv * tile_v) / tile_v))
+            uf = max(0.0, min(1.0, (pu - (cu - 0.5) * tile_u) / tile_u))
+            vf = max(0.0, min(1.0, (pv - (cv - 0.5) * tile_v) / tile_v))
             loop[uv_layer].uv = (b_min[0] + uf * (b_max[0] - b_min[0]),
                                  b_min[1] + vf * (b_max[1] - b_min[1]))
 
@@ -139,6 +141,143 @@ def _set_proj_box_to_tile_size(box, s):
     box.scale = (ts_x, ts_x, ts_y)
 
 
+def _make_material_transparent(mat, alpha=0.35):
+    mat.diffuse_color = (mat.diffuse_color[0], mat.diffuse_color[1],
+                         mat.diffuse_color[2], alpha)
+    mat.blend_method = 'BLEND'
+    if hasattr(mat, "use_backface_culling"):
+        mat.use_backface_culling = False
+    if hasattr(mat, "show_transparent_back"):
+        mat.show_transparent_back = True
+    if hasattr(mat, "use_screen_refraction"):
+        mat.use_screen_refraction = True
+
+    if mat.use_nodes:
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf is not None:
+            if "Alpha" in bsdf.inputs:
+                bsdf.inputs["Alpha"].default_value = alpha
+            if "Base Color" in bsdf.inputs and not bsdf.inputs["Base Color"].is_linked:
+                color = bsdf.inputs["Base Color"].default_value
+                bsdf.inputs["Base Color"].default_value = (
+                    color[0], color[1], color[2], alpha,
+                )
+
+
+def _preview_material(ref_tile):
+    src_mat = None
+    if ref_tile is not None and ref_tile.data.materials:
+        src_mat = ref_tile.data.materials[0]
+
+    if src_mat is not None:
+        mat_name = f"TC_Preview_{src_mat.name}"
+        mat = bpy.data.materials.get(mat_name)
+        if mat is None:
+            mat = src_mat.copy()
+            mat.name = mat_name
+            _make_material_transparent(mat)
+        return mat
+
+    mat = bpy.data.materials.get("TC_Tile_Preview_Material")
+    if mat is None:
+        mat = bpy.data.materials.new("TC_Tile_Preview_Material")
+        mat.diffuse_color = (0.2, 0.65, 1.0, 0.35)
+        mat.use_nodes = True
+        bsdf = mat.node_tree.nodes.get("Principled BSDF")
+        if bsdf is not None:
+            bsdf.inputs["Base Color"].default_value = (0.2, 0.65, 1.0, 0.35)
+            bsdf.inputs["Alpha"].default_value = 0.35
+        _make_material_transparent(mat)
+    return mat
+
+
+def _delete_tile_preview(s):
+    preview = s.tile_preview
+    if preview is not None:
+        try:
+            mesh = preview.data
+            bpy.data.objects.remove(preview, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        except Exception:
+            pass
+    s.tile_preview = None
+
+
+def _create_tile_preview(context, s):
+    box = s.proj_box
+    if box is None:
+        return
+
+    _delete_tile_preview(s)
+
+    mesh = bpy.data.meshes.new(f"TC_PreviewMesh_{box.name}")
+    verts = (
+        (-0.5, -0.5, -0.5),
+        ( 0.5, -0.5, -0.5),
+        ( 0.5,  0.5, -0.5),
+        (-0.5,  0.5, -0.5),
+        (-0.5, -0.5,  0.5),
+        ( 0.5, -0.5,  0.5),
+        ( 0.5,  0.5,  0.5),
+        (-0.5,  0.5,  0.5),
+    )
+    faces = (
+        (0, 3, 2, 1),  # bottom
+        (4, 5, 6, 7),  # top
+        (0, 1, 5, 4),  # front
+        (1, 2, 6, 5),  # right
+        (2, 3, 7, 6),  # back
+        (3, 0, 4, 7),  # left
+    )
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate(clean_customdata=False)
+    mesh.update(calc_edges=True)
+
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    b_min, b_max = get_tile_bounds(s.reference_tile)
+    face_modes = ("bottom", "top", "front", "right", "back", "left")
+
+    def remap_uv(u, v):
+        return (
+            b_min[0] + u * (b_max[0] - b_min[0]),
+            b_min[1] + v * (b_max[1] - b_min[1]),
+        )
+
+    def preview_uv(mode, co):
+        x = co.x + 0.5
+        y = co.y + 0.5
+        z = co.z + 0.5
+
+        if mode == "back":
+            return remap_uv(1.0 - x, z)
+        if mode == "right":
+            return remap_uv(y, z)
+        if mode == "left":
+            return remap_uv(1.0 - y, z)
+        if mode in {"top", "bottom"}:
+            return remap_uv(x, y)
+        return remap_uv(x, z)
+
+    for poly, mode in zip(mesh.polygons, face_modes):
+        for loop_index in poly.loop_indices:
+            vert = mesh.vertices[mesh.loops[loop_index].vertex_index]
+            uv_layer.data[loop_index].uv = preview_uv(mode, vert.co)
+
+    preview = bpy.data.objects.new(f"TC_Preview_{box.name}", mesh)
+    context.collection.objects.link(preview)
+    preview.parent = box
+    preview.matrix_parent_inverse.identity()
+    preview.location = (0.0, 0.0, 0.0)
+    preview.rotation_euler = (0.0, 0.0, 0.0)
+    preview.scale = (1.0, 1.0, 1.0)
+    preview.hide_render = True
+    preview.hide_select = True
+    preview.display_type = 'TEXTURED'
+    preview.data.materials.append(_preview_material(s.reference_tile))
+    s.tile_preview = preview
+
+
 def _create_proj_box(context, s):
     target = s.target_object
 
@@ -149,6 +288,7 @@ def _create_proj_box(context, s):
         box.empty_display_type = 'CUBE'
         context.collection.objects.link(box)
 
+    box.empty_display_size = 1.0
     box.parent = target
     box.matrix_parent_inverse.identity()   # box lives in parent's local space
     box.location       = (0.0, 0.0, 0.0)
@@ -156,9 +296,11 @@ def _create_proj_box(context, s):
     _set_proj_box_to_tile_size(box, s)
     box.hide_render    = True
     s.proj_box = box
+    _create_tile_preview(context, s)
 
 
 def _delete_proj_box(s):
+    _delete_tile_preview(s)
     box = s.proj_box
     if box is not None:
         try:
@@ -177,10 +319,13 @@ def _sync_proj_box(self, context):
             _create_proj_box(context, s)
         else:
             _set_proj_box_to_tile_size(s.proj_box, s)
+            _create_tile_preview(context, s)
     else:
         if s.proj_box is not None:
             _delete_proj_box(s)
             s.proj_box = None
+        else:
+            _delete_tile_preview(s)
 
 
 # ── Properties ────────────────────────────────────────────────────────────────
@@ -223,6 +368,11 @@ class TC_Settings(PropertyGroup):
         name="Projection Box",
         type=bpy.types.Object,
         poll=lambda self, obj: obj.type == 'EMPTY',
+    )
+    tile_preview: PointerProperty(
+        name="Tile Preview",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'MESH',
     )
     duplicate_before_apply: BoolProperty(
         name="Duplicate Before Apply",
@@ -315,6 +465,7 @@ class TC_OT_Apply(Operator):
             (tile_u, tile_v),
             origin=box_origin,
             axes=(ax_x, ax_y, ax_z),
+            center_origin=True,
         )
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
 
@@ -386,6 +537,8 @@ class TC_OT_ResetProjBox(Operator):
         box.location       = (0.0, 0.0, 0.0)
         box.rotation_euler = (0.0, 0.0, 0.0)
         _set_proj_box_to_tile_size(box, s)
+        if s.tile_preview is None or s.tile_preview.parent != box:
+            _create_tile_preview(context, s)
 
         self.report({'INFO'}, "Projection Box reset")
         return {'FINISHED'}
