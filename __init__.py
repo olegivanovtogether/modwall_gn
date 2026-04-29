@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 5, 4),
+    "version": (0, 5, 6),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -309,9 +309,10 @@ def _create_cylinder_control(context, s):
             except Exception:
                 pass
         control = bpy.data.objects.new(control_name, None)
-        control.empty_display_type = 'CIRCLE'
+        control.empty_display_type = 'ARROWS'
         context.collection.objects.link(control)
 
+    control.empty_display_type = 'ARROWS'
     control.empty_display_size = 1.0
     control.parent = target
     control.matrix_parent_inverse.identity()
@@ -320,7 +321,13 @@ def _create_cylinder_control(context, s):
         control.rotation_euler = (0.0, 0.0, 0.0)
         control.scale = (1.0, 1.0, 1.0)
     control.hide_render = True
+    control.show_in_front = True
     s.cylinder_control = control
+    try:
+        control.select_set(True)
+        context.view_layer.objects.active = control
+    except Exception:
+        pass
     return control
 
 
@@ -375,6 +382,33 @@ def _slice_cylinder_height_bands(bm, control_inv, control_mat, axis_idx, tile_h)
     for mult in range(start_mult, end_mult + 1):
         dist = (mult + 0.5) * tile_h
         plane_co = control_mat @ _cyl_local_point(axis_idx, 0.0, 0.0, dist)
+        bmesh.ops.bisect_plane(
+            bm,
+            geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+            plane_co=plane_co,
+            plane_no=plane_no,
+            clear_inner=False,
+            clear_outer=False,
+        )
+
+
+def _slice_cylinder_around_sectors(bm, control_mat, axis_idx, tiles_around):
+    tiles_around = max(tiles_around, 1)
+    if tiles_around <= 1:
+        return
+
+    radial_indices = [idx for idx in range(3) if idx != axis_idx]
+    tile_angle = 2.0 * math.pi / tiles_around
+    plane_co = control_mat.to_translation()
+    rot_mat = control_mat.to_3x3()
+
+    for mult in range(tiles_around):
+        angle = mult * tile_angle
+        local_no = Vector((0.0, 0.0, 0.0))
+        local_no[radial_indices[0]] = -math.sin(angle)
+        local_no[radial_indices[1]] = math.cos(angle)
+        plane_no = (rot_mat @ local_no).normalized()
+
         bmesh.ops.bisect_plane(
             bm,
             geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
@@ -1100,6 +1134,12 @@ class TC_OT_ApplyCylinder(Operator):
             bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
             bm.normal_update()
 
+        _slice_cylinder_around_sectors(
+            bm, control_mat, axis_idx, tiles_around,
+        )
+        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
+        bm.normal_update()
+
         if s.cylinder_project_caps:
             _slice_cylinder_caps_grid(
                 bm, control_inv, control_mat, axis_idx,
@@ -1148,7 +1188,10 @@ class TC_OT_ApplyCylinder(Operator):
                 cell_u = math.floor(angle_c / tile_angle)
                 cell_start = cell_u * tile_angle
 
-                cell_v = math.floor(hc / tile_h)
+                # Height bands are cut around the Cylinder Control origin, so a
+                # full tile spans [-0.5h, +0.5h]. Match that center-origin model
+                # when assigning V, otherwise the first band maps to half a tile.
+                cell_v = math.floor(hc / tile_h + 0.5)
 
                 for loop in face.loops:
                     p1v, p2v, hv = cyl_coords(loop.vert.co)
@@ -1164,7 +1207,7 @@ class TC_OT_ApplyCylinder(Operator):
 
                     angle_unwrapped = angle_c + delta
                     uf = (angle_unwrapped - cell_start) / tile_angle
-                    vf = (hv - cell_v * tile_h) / tile_h
+                    vf = (hv - (cell_v - 0.5) * tile_h) / tile_h
                     loop[uv_layer].uv = remap(uf, vf)
 
         if s.mark_seams:
