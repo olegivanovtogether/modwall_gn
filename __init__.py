@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 5, 2),
+    "version": (0, 5, 4),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -253,6 +253,19 @@ def _cyl_tile_height(s):
     return max(s.cylinder_tile_height, 0.001)
 
 
+def _cyl_tile_plane_sizes(s):
+    ref = s.cylinder_reference_tile
+    if ref is not None:
+        dims = [ref.dimensions.x, ref.dimensions.y, ref.dimensions.z]
+        usable = [dim for dim in dims if dim > 0.001]
+        if len(usable) >= 2:
+            return usable[0], usable[1]
+        if len(usable) == 1:
+            return usable[0], usable[0]
+    fallback = _cyl_tile_height(s)
+    return fallback, fallback
+
+
 def _delete_cylinder_preview(s):
     for attr in ('cylinder_preview', 'cylinder_preview_wire'):
         obj = getattr(s, attr, None)
@@ -323,6 +336,7 @@ def _cyl_projection_frame(s, target):
             rot_mat.col[2].normalized(),
         )
     else:
+        local_mat = Matrix.Identity(4)
         control_inv = Matrix.Identity(4)
         axes = (
             Vector((1.0, 0.0, 0.0)),
@@ -332,7 +346,97 @@ def _cyl_projection_frame(s, target):
 
     axis_idx = _cyl_axis_idx(s)
     height_axis = axes[axis_idx]
-    return control_inv, height_axis
+    return control_inv, height_axis, local_mat
+
+
+def _cyl_local_point(axis_idx, radial_a, radial_b, height):
+    if axis_idx == 0:
+        return Vector((height, radial_a, radial_b))
+    if axis_idx == 1:
+        return Vector((radial_a, height, radial_b))
+    return Vector((radial_a, radial_b, height))
+
+
+def _slice_cylinder_height_bands(bm, control_inv, control_mat, axis_idx, tile_h):
+    if tile_h <= 0.001:
+        return
+
+    values = [
+        _cyl_decompose(control_inv @ vert.co, axis_idx)[2]
+        for vert in bm.verts
+    ]
+    if not values:
+        return
+
+    start_mult = math.floor(min(values) / tile_h - 0.5)
+    end_mult   = math.ceil(max(values) / tile_h - 0.5)
+    plane_no = control_mat.to_3x3().col[axis_idx].normalized()
+
+    for mult in range(start_mult, end_mult + 1):
+        dist = (mult + 0.5) * tile_h
+        plane_co = control_mat @ _cyl_local_point(axis_idx, 0.0, 0.0, dist)
+        bmesh.ops.bisect_plane(
+            bm,
+            geom=bm.verts[:] + bm.edges[:] + bm.faces[:],
+            plane_co=plane_co,
+            plane_no=plane_no,
+            clear_inner=False,
+            clear_outer=False,
+        )
+
+
+def _slice_cylinder_caps_grid(bm, control_inv, control_mat, axis_idx,
+                              tile_u, tile_v):
+    radial_indices = [idx for idx in range(3) if idx != axis_idx]
+    radial_axes = [
+        control_mat.to_3x3().col[radial_indices[0]].normalized(),
+        control_mat.to_3x3().col[radial_indices[1]].normalized(),
+    ]
+    steps = (tile_u, tile_v)
+
+    for radial_axis_idx, step in zip(radial_indices, steps):
+        if step <= 0.001:
+            continue
+
+        values = []
+        for vert in bm.verts:
+            local = control_inv @ vert.co
+            values.append(local[radial_axis_idx])
+        if not values:
+            continue
+
+        start_mult = math.floor(min(values) / step - 0.5)
+        end_mult = math.ceil(max(values) / step - 0.5)
+        plane_no = radial_axes[0 if radial_axis_idx == radial_indices[0] else 1]
+
+        for mult in range(start_mult, end_mult + 1):
+            dist = (mult + 0.5) * step
+            local_co = Vector((0.0, 0.0, 0.0))
+            local_co[radial_axis_idx] = dist
+            plane_co = control_mat @ local_co
+
+            cap_faces = [
+                face for face in bm.faces
+                if abs(face.normal.dot(control_mat.to_3x3().col[axis_idx].normalized())) > 0.7
+            ]
+            geom = set()
+            for face in cap_faces:
+                geom.add(face)
+                for edge in face.edges:
+                    geom.add(edge)
+                for vert in face.verts:
+                    geom.add(vert)
+            if not geom:
+                continue
+
+            bmesh.ops.bisect_plane(
+                bm,
+                geom=list(geom),
+                plane_co=plane_co,
+                plane_no=plane_no,
+                clear_inner=False,
+                clear_outer=False,
+            )
 
 
 def _build_cylinder_verts(n, h, r, axis_idx):
@@ -758,8 +862,13 @@ class TC_Settings(PropertyGroup):
             ('Y', "Reference Y", "Use reference tile Y dimension"),
             ('Z', "Reference Z", "Use reference tile Z dimension"),
         ],
-        default='AUTO',
+        default='X',
         update=_sync_cylinder_preview,
+    )
+    cylinder_cut_height_bands: BoolProperty(
+        name="Cut Height Bands",
+        description="Cut side faces into tile-height bands before assigning cylinder UVs",
+        default=True,
     )
     cylinder_tile_height: FloatProperty(
         name="Tile Height",
@@ -962,10 +1071,11 @@ class TC_OT_ApplyCylinder(Operator):
         b_min, b_max  = get_tile_bounds(ref_tile)
         if s.cylinder_control is None:
             _create_cylinder_control(context, s)
-        control_inv, height_axis = _cyl_projection_frame(s, target)
+        control_inv, height_axis, control_mat = _cyl_projection_frame(s, target)
         axis_idx      = _cyl_axis_idx(s)
         tiles_around  = max(s.cylinder_tiles_around, 1)
         tile_h        = _cyl_tile_height(s)
+        cap_tile_u, cap_tile_v = _cyl_tile_plane_sizes(s)
         tile_angle    = 2.0 * math.pi / tiles_around
 
         # ── Duplicate or work in-place ────────────────────────────────────────
@@ -982,6 +1092,21 @@ class TC_OT_ApplyCylinder(Operator):
         # ── BMesh UV projection ───────────────────────────────────────────────
         bm = bmesh.new()
         bm.from_mesh(work_obj.data)
+
+        if s.cylinder_cut_height_bands:
+            _slice_cylinder_height_bands(
+                bm, control_inv, control_mat, axis_idx, tile_h,
+            )
+            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
+            bm.normal_update()
+
+        if s.cylinder_project_caps:
+            _slice_cylinder_caps_grid(
+                bm, control_inv, control_mat, axis_idx,
+                cap_tile_u, cap_tile_v,
+            )
+            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
+            bm.normal_update()
 
         uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
 
@@ -1003,19 +1128,12 @@ class TC_OT_ApplyCylinder(Operator):
             p1c, p2c, hc = cyl_coords(fc)
 
             if is_cap and s.cylinder_project_caps:
-                # ── Planar cap projection ─────────────────────────────────────
-                # Estimate the local radius from this face's vertices
-                rmax = max(
-                    math.sqrt(
-                        cyl_coords(loop.vert.co)[0] ** 2 +
-                        cyl_coords(loop.vert.co)[1] ** 2
-                    )
-                    for loop in face.loops
-                ) or 1.0
+                cu = math.floor(p1c / cap_tile_u + 0.5)
+                cv = math.floor(p2c / cap_tile_v + 0.5)
                 for loop in face.loops:
                     p1v, p2v, _ = cyl_coords(loop.vert.co)
-                    uf = p1v / (2.0 * rmax) + 0.5
-                    vf = p2v / (2.0 * rmax) + 0.5
+                    uf = (p1v - (cu - 0.5) * cap_tile_u) / cap_tile_u
+                    vf = (p2v - (cv - 0.5) * cap_tile_v) / cap_tile_v
                     loop[uv_layer].uv = remap(uf, vf)
 
             elif is_cap:
@@ -1048,6 +1166,16 @@ class TC_OT_ApplyCylinder(Operator):
                     uf = (angle_unwrapped - cell_start) / tile_angle
                     vf = (hv - cell_v * tile_h) / tile_h
                     loop[uv_layer].uv = remap(uf, vf)
+
+        if s.mark_seams:
+            uv_layer = bm.loops.layers.uv.get("UVMap")
+            if uv_layer:
+                _process_seams(
+                    bm,
+                    uv_layer,
+                    s.seam_angle,
+                    dissolve_non_seamed_edges=s.dissolve_non_seamed_edges,
+                )
 
         bm.to_mesh(work_obj.data)
         bm.free()
@@ -1133,6 +1261,7 @@ class TC_PT_Main(Panel):
         height_row = col.row(align=True)
         height_row.enabled = s.cylinder_tile_height_source == 'MANUAL'
         height_row.prop(s, "cylinder_tile_height")
+        col.prop(s, "cylinder_cut_height_bands")
         if s.cylinder_control is not None:
             box.label(text="Cylinder Control: move / rotate / scale it")
         box.prop(s, "cylinder_project_caps")
