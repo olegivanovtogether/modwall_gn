@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 5, 7),
+    "version": (0, 5, 9),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -886,6 +886,11 @@ class TC_Settings(PropertyGroup):
         default=1, min=1, max=64,
         update=_sync_cylinder_preview,
     )
+    cylinder_stretch_around: BoolProperty(
+        name="Stretch Around",
+        description="Use the older wrap behavior: do not add angular cuts around the cylinder",
+        default=False,
+    )
     cylinder_tile_height_source: EnumProperty(
         name="Tile Height Source",
         description="Choose how cylinder tile height is measured",
@@ -1161,11 +1166,12 @@ class TC_OT_ApplyCylinder(Operator):
             bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
             bm.normal_update()
 
-        _slice_cylinder_around_sectors(
-            bm, control_mat, axis_idx, tiles_around,
-        )
-        bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
-        bm.normal_update()
+        if not s.cylinder_stretch_around:
+            _slice_cylinder_around_sectors(
+                bm, control_mat, axis_idx, tiles_around,
+            )
+            bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
+            bm.normal_update()
 
         if s.cylinder_project_caps:
             _slice_cylinder_caps_grid(
@@ -1280,15 +1286,26 @@ class TC_PT_Main(Panel):
 
     def draw(self, context):
         layout = self.layout
-        s = context.scene.tc_settings
 
         info = layout.column(align=True)
         info.label(text="Alpha mobile-game tiling tool.", icon='INFO')
         info.label(text="Use a flat, lying reference tile plane.")
         info.label(text="Rectangular tiles work; square tiles are safer.")
 
-        layout.separator()
-        layout.prop(s, "target_object",  icon='MESH_DATA')
+
+class TC_PT_TileGrid(Panel):
+    bl_label = "Tile Grid"
+    bl_idname = "TC_PT_TILE_GRID"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Tile Cutter'
+    bl_parent_id = "TC_PT_MAIN"
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.tc_settings
+
+        layout.prop(s, "target_object", icon='MESH_DATA')
         layout.prop(s, "reference_tile", icon='UV')
 
         layout.separator()
@@ -1309,43 +1326,53 @@ class TC_PT_Main(Panel):
         seam_col = layout.column(align=True)
         seam_col.enabled = s.mark_seams
         seam_col.prop(s, "dissolve_non_seamed_edges")
-        seam_col.prop(s, "seam_angle", text="Corner Angle (°)")
+        seam_col.prop(s, "seam_angle", text="Corner Angle (deg)")
 
         layout.separator()
         row = layout.row()
         row.scale_y = 1.4
         row.operator("tilecutter.apply", icon='MESH_GRID')
 
-        # ── Cylinder Projection ───────────────────────────────────────────────
-        layout.separator()
-        box = layout.box()
-        box.label(text="Cylinder Projection", icon='MESH_CYLINDER')
 
-        box.prop(s, "cylinder_target",          icon='MESH_DATA')
-        box.prop(s, "cylinder_reference_tile",  icon='UV')
+class TC_PT_CylinderProjection(Panel):
+    bl_label = "Cylinder Projection"
+    bl_idname = "TC_PT_CYLINDER_PROJECTION"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Tile Cutter'
+    bl_parent_id = "TC_PT_MAIN"
 
-        col = box.column(align=True)
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.tc_settings
+
+        layout.prop(s, "cylinder_target", icon='MESH_DATA')
+        layout.prop(s, "cylinder_reference_tile", icon='UV')
+
+        col = layout.column(align=True)
         col.prop(s, "cylinder_axis")
         col.prop(s, "cylinder_tiles_around")
+        col.prop(s, "cylinder_stretch_around")
         col.prop(s, "cylinder_tile_height_source")
         height_row = col.row(align=True)
         height_row.enabled = s.cylinder_tile_height_source == 'MANUAL'
         height_row.prop(s, "cylinder_tile_height")
         col.prop(s, "cylinder_cut_height_bands")
-        if s.cylinder_control is not None:
-            box.label(text="Cylinder Control: move / rotate / scale it")
-            box.operator("tilecutter.select_cylinder_control",
-                         text="Select Cylinder Control", icon='EMPTY_ARROWS')
-        box.prop(s, "cylinder_project_caps")
-        box.prop(s, "cylinder_duplicate_before_apply")
 
-        row = box.row()
+        if s.cylinder_control is not None:
+            layout.label(text="Cylinder Control: move / rotate / scale it")
+            layout.operator("tilecutter.select_cylinder_control",
+                            text="Select Cylinder Control", icon='EMPTY_ARROWS')
+
+        layout.prop(s, "cylinder_project_caps")
+        layout.prop(s, "cylinder_duplicate_before_apply")
+
+        row = layout.row()
         row.scale_y = 1.4
         row.operator("tilecutter.apply_cylinder", icon='MESH_CYLINDER')
 
 
-# ── Registration ──────────────────────────────────────────────────────────────
-
+# Registration
 classes = (
     TC_Settings,
     TC_OT_Apply,
@@ -1353,6 +1380,8 @@ classes = (
     TC_OT_SelectCylinderControl,
     TC_OT_ApplyCylinder,
     TC_PT_Main,
+    TC_PT_TileGrid,
+    TC_PT_CylinderProjection,
 )
 
 
@@ -1370,3 +1399,4 @@ def unregister():
 
 if __name__ == "__main__":
     register()
+
