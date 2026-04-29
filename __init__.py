@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 5, 6),
+    "version": (0, 5, 7),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -309,11 +309,11 @@ def _create_cylinder_control(context, s):
             except Exception:
                 pass
         control = bpy.data.objects.new(control_name, None)
-        control.empty_display_type = 'ARROWS'
+        control.empty_display_type = 'CUBE'
         context.collection.objects.link(control)
 
-    control.empty_display_type = 'ARROWS'
-    control.empty_display_size = 1.0
+    control.empty_display_type = 'CUBE'
+    control.empty_display_size = 1.5
     control.parent = target
     control.matrix_parent_inverse.identity()
     if s.cylinder_control is None or s.cylinder_control != control:
@@ -1085,6 +1085,33 @@ class TC_OT_ResetProjBox(Operator):
         return {'FINISHED'}
 
 
+# ── Operator: Select Cylinder Control ────────────────────────────────────────
+
+class TC_OT_SelectCylinderControl(Operator):
+    bl_idname = "tilecutter.select_cylinder_control"
+    bl_label = "Select Cylinder Control"
+    bl_description = "Select the Cylinder Control empty for move / rotate / scale"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        s = context.scene.tc_settings
+        return s.cylinder_target is not None and s.cylinder_reference_tile is not None
+
+    def execute(self, context):
+        s = context.scene.tc_settings
+        control = s.cylinder_control or _create_cylinder_control(context, s)
+        if control is None:
+            self.report({'WARNING'}, "Cylinder Control is not available")
+            return {'CANCELLED'}
+
+        bpy.ops.object.select_all(action='DESELECT')
+        control.select_set(True)
+        context.view_layer.objects.active = control
+        self.report({'INFO'}, "Cylinder Control selected")
+        return {'FINISHED'}
+
+
 # ── Operator: Apply Cylinder Projection ──────────────────────────────────────
 
 class TC_OT_ApplyCylinder(Operator):
@@ -1307,6 +1334,8 @@ class TC_PT_Main(Panel):
         col.prop(s, "cylinder_cut_height_bands")
         if s.cylinder_control is not None:
             box.label(text="Cylinder Control: move / rotate / scale it")
+            box.operator("tilecutter.select_cylinder_control",
+                         text="Select Cylinder Control", icon='EMPTY_ARROWS')
         box.prop(s, "cylinder_project_caps")
         box.prop(s, "cylinder_duplicate_before_apply")
 
@@ -1321,6 +1350,7 @@ classes = (
     TC_Settings,
     TC_OT_Apply,
     TC_OT_ResetProjBox,
+    TC_OT_SelectCylinderControl,
     TC_OT_ApplyCylinder,
     TC_PT_Main,
 )
