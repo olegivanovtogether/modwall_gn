@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 5, 9),
+    "version": (0, 6, 0),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -623,6 +623,373 @@ def _sync_cylinder_preview(self, context):
         _delete_cylinder_control(s)
 
 
+# ── UVW Map Projection helpers ───────────────────────────────────────────────
+
+def _delete_uvw_gizmo(s):
+    for attr in ('uvw_gizmo_preview', 'uvw_gizmo_preview_wire'):
+        obj = getattr(s, attr, None)
+        if obj is None:
+            continue
+        try:
+            mesh = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        except Exception:
+            pass
+        try:
+            setattr(s, attr, None)
+        except Exception:
+            pass
+    gizmo = s.uvw_gizmo
+    if gizmo is not None:
+        try:
+            bpy.data.objects.remove(gizmo, do_unlink=True)
+        except Exception:
+            pass
+    try:
+        s.uvw_gizmo = None
+    except Exception:
+        pass
+
+
+def _remap_preview_uv(ref, u, v):
+    b_min, b_max = get_tile_bounds(ref)
+    return (
+        b_min[0] + u * (b_max[0] - b_min[0]),
+        b_min[1] + v * (b_max[1] - b_min[1]),
+    )
+
+
+def _uvw_reference_tile_sizes(ref):
+    if ref is None:
+        return 1.0, 1.0
+    dims = [ref.dimensions.x, ref.dimensions.y, ref.dimensions.z]
+    usable = [dim for dim in dims if dim > 0.001]
+    if len(usable) >= 2:
+        return usable[0], usable[1]
+    if len(usable) == 1:
+        return usable[0], usable[0]
+    return 1.0, 1.0
+
+
+def _uvw_preview_box(context, s, gizmo, ref):
+    verts = (
+        (-0.5, -0.5, -0.5), ( 0.5, -0.5, -0.5),
+        ( 0.5,  0.5, -0.5), (-0.5,  0.5, -0.5),
+        (-0.5, -0.5,  0.5), ( 0.5, -0.5,  0.5),
+        ( 0.5,  0.5,  0.5), (-0.5,  0.5,  0.5),
+    )
+    faces = (
+        (0, 3, 2, 1), (4, 5, 6, 7),
+        (0, 1, 5, 4), (1, 2, 6, 5),
+        (2, 3, 7, 6), (3, 0, 4, 7),
+    )
+    mesh = bpy.data.meshes.new("TC_UVWPreviewMesh")
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate(clean_customdata=False)
+    mesh.update(calc_edges=True)
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    face_modes = ("bottom", "top", "front", "right", "back", "left")
+
+    def preview_uv(mode, co):
+        x = co.x + 0.5
+        y = co.y + 0.5
+        z = co.z + 0.5
+        if mode == "back":
+            return _remap_preview_uv(ref, 1.0 - x, z)
+        if mode == "right":
+            return _remap_preview_uv(ref, y, z)
+        if mode == "left":
+            return _remap_preview_uv(ref, 1.0 - y, z)
+        if mode in {"top", "bottom"}:
+            return _remap_preview_uv(ref, x, y)
+        return _remap_preview_uv(ref, x, z)
+
+    for poly, mode in zip(mesh.polygons, face_modes):
+        for loop_index in poly.loop_indices:
+            vert = mesh.vertices[mesh.loops[loop_index].vertex_index]
+            uv_layer.data[loop_index].uv = preview_uv(mode, vert.co)
+
+    preview = bpy.data.objects.new("TC_UVWPreview", mesh)
+    context.collection.objects.link(preview)
+    preview.parent = gizmo
+    preview.matrix_parent_inverse.identity()
+    preview.location = preview.rotation_euler = (0.0, 0.0, 0.0)
+    preview.scale = (1.0, 1.0, 1.0)
+    preview.hide_render = preview.hide_select = True
+    preview.display_type = 'TEXTURED'
+    preview.data.materials.append(_preview_material(ref))
+    s.uvw_gizmo_preview = preview
+
+    edges = (
+        (0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7),
+    )
+    wire_mesh = bpy.data.meshes.new("TC_UVWPreviewWireMesh")
+    wire_mesh.from_pydata(verts, edges, [])
+    wire_mesh.update(calc_edges=True)
+    wire = bpy.data.objects.new("TC_UVWPreviewWire", wire_mesh)
+    context.collection.objects.link(wire)
+    wire.parent = gizmo
+    wire.matrix_parent_inverse.identity()
+    wire.location = wire.rotation_euler = (0.0, 0.0, 0.0)
+    wire.scale = (1.0, 1.0, 1.0)
+    wire.hide_render = wire.hide_select = True
+    wire.display_type = 'WIRE'
+    wire.show_in_front = True
+    wire.data.materials.append(_wire_material())
+    s.uvw_gizmo_preview_wire = wire
+
+
+def _uvw_preview_plane(context, s, gizmo, ref):
+    verts = ((-0.5, -0.5, 0.0), (0.5, -0.5, 0.0), (0.5, 0.5, 0.0), (-0.5, 0.5, 0.0))
+    mesh = bpy.data.meshes.new("TC_UVWPreviewMesh")
+    mesh.from_pydata(verts, [], [(0, 1, 2, 3)])
+    mesh.validate(clean_customdata=False)
+    mesh.update(calc_edges=True)
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for poly in mesh.polygons:
+        for loop_index in poly.loop_indices:
+            vert = mesh.vertices[mesh.loops[loop_index].vertex_index]
+            uv_layer.data[loop_index].uv = _remap_preview_uv(
+                ref, vert.co.x + 0.5, vert.co.y + 0.5,
+            )
+
+    preview = bpy.data.objects.new("TC_UVWPreview", mesh)
+    context.collection.objects.link(preview)
+    preview.parent = gizmo
+    preview.matrix_parent_inverse.identity()
+    preview.location = preview.rotation_euler = (0.0, 0.0, 0.0)
+    preview.scale = (1.0, 1.0, 1.0)
+    preview.hide_render = preview.hide_select = True
+    preview.display_type = 'TEXTURED'
+    preview.data.materials.append(_preview_material(ref))
+    s.uvw_gizmo_preview = preview
+
+    wire_mesh = bpy.data.meshes.new("TC_UVWPreviewWireMesh")
+    wire_mesh.from_pydata(verts, ((0,1),(1,2),(2,3),(3,0)), [])
+    wire_mesh.update(calc_edges=True)
+    wire = bpy.data.objects.new("TC_UVWPreviewWire", wire_mesh)
+    context.collection.objects.link(wire)
+    wire.parent = gizmo
+    wire.matrix_parent_inverse.identity()
+    wire.location = wire.rotation_euler = (0.0, 0.0, 0.0)
+    wire.scale = (1.0, 1.0, 1.0)
+    wire.hide_render = wire.hide_select = True
+    wire.display_type = 'WIRE'
+    wire.show_in_front = True
+    wire.data.materials.append(_wire_material())
+    s.uvw_gizmo_preview_wire = wire
+
+
+def _uvw_preview_cylinder(context, s, gizmo, ref):
+    n = 16
+    r = 0.5
+    verts_b = [(r * math.cos(2*math.pi*i/n), r * math.sin(2*math.pi*i/n), -0.5) for i in range(n)]
+    verts_t = [(r * math.cos(2*math.pi*i/n), r * math.sin(2*math.pi*i/n),  0.5) for i in range(n)]
+    verts = verts_b + verts_t
+    faces = [(i, (i+1)%n, n+(i+1)%n, n+i) for i in range(n)]
+
+    mesh = bpy.data.meshes.new("TC_UVWPreviewMesh")
+    mesh.from_pydata(verts, [], faces)
+    mesh.validate(clean_customdata=False)
+    mesh.update(calc_edges=True)
+    uv_layer = mesh.uv_layers.new(name="UVMap")
+    for poly_index, poly in enumerate(mesh.polygons):
+        u0 = poly_index / n
+        u1 = (poly_index + 1) / n
+        for corner, loop_index in enumerate(poly.loop_indices):
+            vert = mesh.vertices[mesh.loops[loop_index].vertex_index]
+            u = u0 if corner in {0, 3} else u1
+            v = vert.co.z + 0.5
+            uv_layer.data[loop_index].uv = _remap_preview_uv(ref, u, v)
+
+    preview = bpy.data.objects.new("TC_UVWPreview", mesh)
+    context.collection.objects.link(preview)
+    preview.parent = gizmo
+    preview.matrix_parent_inverse.identity()
+    preview.location = preview.rotation_euler = (0.0, 0.0, 0.0)
+    preview.scale = (1.0, 1.0, 1.0)
+    preview.hide_render = preview.hide_select = True
+    preview.display_type = 'TEXTURED'
+    preview.data.materials.append(_preview_material(ref))
+    s.uvw_gizmo_preview = preview
+
+    wire_edges = []
+    for i in range(n):
+        j = (i+1) % n
+        wire_edges += [(i, j), (n+i, n+j), (i, n+i)]
+    wire_mesh = bpy.data.meshes.new("TC_UVWPreviewWireMesh")
+    wire_mesh.from_pydata(verts, wire_edges, [])
+    wire_mesh.update(calc_edges=True)
+    wire = bpy.data.objects.new("TC_UVWPreviewWire", wire_mesh)
+    context.collection.objects.link(wire)
+    wire.parent = gizmo
+    wire.matrix_parent_inverse.identity()
+    wire.location = wire.rotation_euler = (0.0, 0.0, 0.0)
+    wire.scale = (1.0, 1.0, 1.0)
+    wire.hide_render = wire.hide_select = True
+    wire.display_type = 'WIRE'
+    wire.show_in_front = True
+    wire.data.materials.append(_wire_material())
+    s.uvw_gizmo_preview_wire = wire
+
+
+def _create_uvw_gizmo(context, s):
+    target = s.uvw_target
+    ref    = s.uvw_reference_tile
+    if target is None or ref is None:
+        return None
+
+    _delete_uvw_gizmo(s)
+
+    mapping = s.uvw_mapping_type
+    gizmo_name = f"TC_UVWGizmo_{target.name}"
+    gizmo = bpy.data.objects.new(gizmo_name, None)
+    gizmo.empty_display_type = {'BOX': 'CUBE', 'PLANAR': 'SINGLE_ARROW', 'CYLINDER': 'CIRCLE'}.get(mapping, 'CUBE')
+    gizmo.empty_display_size = 1.0
+    context.collection.objects.link(gizmo)
+    gizmo.parent = target
+    gizmo.matrix_parent_inverse.identity()
+    gizmo.location = gizmo.rotation_euler = (0.0, 0.0, 0.0)
+
+    tile_u, tile_v = _uvw_reference_tile_sizes(ref)
+    depth = max(min(tile_u, tile_v), 0.25)
+    if mapping == 'PLANAR':
+        gizmo.scale = (tile_u, tile_v, 1.0)
+    elif mapping == 'BOX':
+        gizmo.scale = (tile_u, depth, tile_v)
+    else:  # CYLINDER
+        gizmo.scale = (tile_u, tile_u, tile_v)
+
+    gizmo.hide_render = True
+    gizmo.show_in_front = True
+    s.uvw_gizmo = gizmo
+
+    if mapping == 'BOX':
+        _uvw_preview_box(context, s, gizmo, ref)
+    elif mapping == 'PLANAR':
+        _uvw_preview_plane(context, s, gizmo, ref)
+    else:
+        _uvw_preview_cylinder(context, s, gizmo, ref)
+
+    try:
+        gizmo.select_set(True)
+        context.view_layer.objects.active = gizmo
+    except Exception:
+        pass
+    return gizmo
+
+
+def _sync_uvw_gizmo(self, context):
+    s = context.scene.tc_settings
+    if s.uvw_target is not None and s.uvw_reference_tile is not None:
+        tile_u, tile_v = _uvw_reference_tile_sizes(s.uvw_reference_tile)
+        s.uvw_tile_u = tile_u
+        s.uvw_tile_v = tile_v
+        _create_uvw_gizmo(context, s)
+    else:
+        _delete_uvw_gizmo(s)
+
+
+# ── UVW Map UV projection functions ──────────────────────────────────────────
+
+def _apply_uvw_box_uv(bm, gizmo_inv, tile_u, tile_v, flip_u, flip_v, b_min, b_max):
+    uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
+    tile_u = max(tile_u, 0.001)
+    tile_v = max(tile_v, 0.001)
+    rot_inv = gizmo_inv.to_3x3()
+
+    for face in bm.faces:
+        fn_local = rot_inv @ face.normal
+        ax = abs(fn_local.x)
+        ay = abs(fn_local.y)
+        az = abs(fn_local.z)
+
+        if az >= ax and az >= ay:
+            ui, vi = 0, 1   # project onto local XY
+        elif ax >= ay:
+            ui, vi = 1, 2   # project onto local YZ
+        else:
+            ui, vi = 0, 2   # project onto local XZ
+
+        fc = gizmo_inv @ face.calc_center_median()
+        cell_u = math.floor(fc[ui] / tile_u + 0.5)
+        cell_v = math.floor(fc[vi] / tile_v + 0.5)
+
+        for loop in face.loops:
+            co = gizmo_inv @ loop.vert.co
+            uf = (co[ui] - (cell_u - 0.5) * tile_u) / tile_u
+            vf = (co[vi] - (cell_v - 0.5) * tile_v) / tile_v
+            if flip_u: uf = 1.0 - uf
+            if flip_v: vf = 1.0 - vf
+            loop[uv_layer].uv = (
+                b_min[0] + uf * (b_max[0] - b_min[0]),
+                b_min[1] + vf * (b_max[1] - b_min[1]),
+            )
+
+
+def _apply_uvw_planar_uv(bm, gizmo_inv, tile_u, tile_v, flip_u, flip_v, b_min, b_max):
+    uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
+    tile_u = max(tile_u, 0.001)
+    tile_v = max(tile_v, 0.001)
+
+    for face in bm.faces:
+        fc = gizmo_inv @ face.calc_center_median()
+        cell_u = math.floor(fc.x / tile_u + 0.5)
+        cell_v = math.floor(fc.y / tile_v + 0.5)
+
+        for loop in face.loops:
+            co = gizmo_inv @ loop.vert.co
+            uf = (co.x - (cell_u - 0.5) * tile_u) / tile_u
+            vf = (co.y - (cell_v - 0.5) * tile_v) / tile_v
+            if flip_u: uf = 1.0 - uf
+            if flip_v: vf = 1.0 - vf
+            loop[uv_layer].uv = (
+                b_min[0] + uf * (b_max[0] - b_min[0]),
+                b_min[1] + vf * (b_max[1] - b_min[1]),
+            )
+
+
+def _apply_uvw_cylinder_uv(bm, gizmo_inv, gizmo_scale_xy, tile_u, tile_v,
+                            flip_u, flip_v, b_min, b_max):
+    """Cylindrical projection around local Z of gizmo.
+    tile_u = arc-length world size of one U tile (circumference / tile_u = repeats).
+    tile_v = world height of one V tile.
+    """
+    uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
+    tile_u = max(tile_u, 0.001)
+    tile_v = max(tile_v, 0.001)
+    circumference = 2.0 * math.pi * gizmo_scale_xy
+    angle_per_tile = (tile_u / circumference) * 2.0 * math.pi if circumference > 0.001 else 2.0 * math.pi
+
+    for face in bm.faces:
+        fc = gizmo_inv @ face.calc_center_median()
+        angle_c = math.atan2(fc.y, fc.x)
+        if angle_c < 0.0:
+            angle_c += 2.0 * math.pi
+        cell_u = math.floor(angle_c / angle_per_tile)
+        cell_start = cell_u * angle_per_tile
+        cell_v = math.floor(fc.z / tile_v + 0.5)
+
+        for loop in face.loops:
+            co = gizmo_inv @ loop.vert.co
+            angle_v = math.atan2(co.y, co.x)
+            if angle_v < 0.0:
+                angle_v += 2.0 * math.pi
+            delta = angle_v - angle_c
+            if delta >  math.pi: delta -= 2.0 * math.pi
+            if delta < -math.pi: delta += 2.0 * math.pi
+            uf = (angle_c + delta - cell_start) / angle_per_tile
+            vf = (co.z - (cell_v - 0.5) * tile_v) / tile_v
+            if flip_u: uf = 1.0 - uf
+            if flip_v: vf = 1.0 - vf
+            loop[uv_layer].uv = (
+                b_min[0] + max(0.0, min(1.0, uf)) * (b_max[0] - b_min[0]),
+                b_min[1] + max(0.0, min(1.0, vf)) * (b_max[1] - b_min[1]),
+            )
+
+
 # ── Box Tile Preview (existing) ───────────────────────────────────────────────
 
 def _delete_tile_preview(s):
@@ -941,6 +1308,77 @@ class TC_Settings(PropertyGroup):
         name="Cylinder Control",
         type=bpy.types.Object,
         poll=lambda self, obj: obj.type == 'EMPTY',
+    )
+
+    # ── UVW Map Projection ────────────────────────────────────────────────────
+    uvw_target: PointerProperty(
+        name="Target Mesh",
+        type=bpy.types.Object,
+        poll=_poll_mesh,
+        update=_sync_uvw_gizmo,
+    )
+    uvw_reference_tile: PointerProperty(
+        name="Reference Tile",
+        type=bpy.types.Object,
+        poll=_poll_mesh,
+        update=_sync_uvw_gizmo,
+    )
+    uvw_mapping_type: EnumProperty(
+        name="Mapping Type",
+        items=[
+            ('BOX',      "Box",      "Box (cubic) projection from gizmo local axes"),
+            ('PLANAR',   "Planar",   "Planar projection from gizmo local XY plane"),
+            ('CYLINDER', "Cylinder", "Cylindrical projection around gizmo local Z"),
+        ],
+        default='BOX',
+        update=_sync_uvw_gizmo,
+    )
+    uvw_duplicate_before_apply: BoolProperty(
+        name="Duplicate Before Apply",
+        description="Work on a copy; original mesh is left untouched",
+        default=True,
+    )
+    uvw_copy_material: BoolProperty(
+        name="Copy Material From Reference",
+        description="Replace target materials with the reference tile materials after Apply",
+        default=True,
+    )
+    uvw_tile_u: FloatProperty(
+        name="U Tile Size",
+        description="World-space width of one UV tile along U",
+        default=1.0, min=0.001, max=100.0,
+        unit='LENGTH',
+    )
+    uvw_tile_v: FloatProperty(
+        name="V Tile Size",
+        description="World-space height of one UV tile along V",
+        default=1.0, min=0.001, max=100.0,
+        unit='LENGTH',
+    )
+    uvw_flip_u: BoolProperty(
+        name="U Flip",
+        description="Mirror UV along U axis",
+        default=False,
+    )
+    uvw_flip_v: BoolProperty(
+        name="V Flip",
+        description="Mirror UV along V axis",
+        default=False,
+    )
+    uvw_gizmo: PointerProperty(
+        name="UVW Gizmo",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'EMPTY',
+    )
+    uvw_gizmo_preview: PointerProperty(
+        name="UVW Gizmo Preview",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'MESH',
+    )
+    uvw_gizmo_preview_wire: PointerProperty(
+        name="UVW Gizmo Preview Wire",
+        type=bpy.types.Object,
+        poll=lambda self, obj: obj.type == 'MESH',
     )
 
 
@@ -1275,6 +1713,116 @@ class TC_OT_ApplyCylinder(Operator):
         return {'FINISHED'}
 
 
+# ── Operator: Select UVW Gizmo ───────────────────────────────────────────────
+
+class TC_OT_SelectUVWGizmo(Operator):
+    bl_idname = "tilecutter.select_uvw_gizmo"
+    bl_label = "Select / Create UVW Gizmo"
+    bl_description = "Select the UVW Gizmo object for move / rotate / scale"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        s = context.scene.tc_settings
+        return s.uvw_target is not None and s.uvw_reference_tile is not None
+
+    def execute(self, context):
+        s = context.scene.tc_settings
+        gizmo = s.uvw_gizmo or _create_uvw_gizmo(context, s)
+        if gizmo is None:
+            self.report({'WARNING'}, "UVW Gizmo is not available")
+            return {'CANCELLED'}
+        bpy.ops.object.select_all(action='DESELECT')
+        gizmo.select_set(True)
+        context.view_layer.objects.active = gizmo
+        self.report({'INFO'}, "UVW Gizmo selected")
+        return {'FINISHED'}
+
+
+# ── Operator: Apply UVW Map ───────────────────────────────────────────────────
+
+class TC_OT_ApplyUVWMap(Operator):
+    bl_idname = "tilecutter.apply_uvw_map"
+    bl_label = "Apply UVW Map"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        s = context.scene.tc_settings
+        return s.uvw_target is not None and s.uvw_reference_tile is not None
+
+    def execute(self, context):
+        s        = context.scene.tc_settings
+        target   = s.uvw_target
+        ref_tile = s.uvw_reference_tile
+
+        gizmo = s.uvw_gizmo
+        if gizmo is None:
+            self.report({'WARNING'}, "UVW Gizmo not found — use 'Select / Create UVW Gizmo' first")
+            return {'CANCELLED'}
+
+        b_min, b_max = get_tile_bounds(ref_tile)
+        tile_u = max(s.uvw_tile_u, 0.001)
+        tile_v = max(s.uvw_tile_v, 0.001)
+
+        gizmo_local_mat = target.matrix_world.inverted() @ gizmo.matrix_world
+        gizmo_inv       = gizmo_local_mat.inverted()
+
+        # ── Duplicate or work in-place ────────────────────────────────────────
+        if s.uvw_duplicate_before_apply:
+            new_data = target.data.copy()
+            work_obj = target.copy()
+            work_obj.data = new_data
+            work_obj.name = target.name + "_uvw"
+            context.collection.objects.link(work_obj)
+            target.hide_set(True)
+        else:
+            work_obj = target
+
+        bm = bmesh.new()
+        bm.from_mesh(work_obj.data)
+
+        mapping = s.uvw_mapping_type
+        if mapping == 'BOX':
+            _apply_uvw_box_uv(
+                bm, gizmo_inv, tile_u, tile_v,
+                s.uvw_flip_u, s.uvw_flip_v, b_min, b_max,
+            )
+        elif mapping == 'PLANAR':
+            _apply_uvw_planar_uv(
+                bm, gizmo_inv, tile_u, tile_v,
+                s.uvw_flip_u, s.uvw_flip_v, b_min, b_max,
+            )
+        else:  # CYLINDER
+            scl = gizmo_local_mat.to_scale()
+            radius = max((abs(scl.x) + abs(scl.y)) * 0.5, 0.001)
+            _apply_uvw_cylinder_uv(
+                bm, gizmo_inv, radius, tile_u, tile_v,
+                s.uvw_flip_u, s.uvw_flip_v, b_min, b_max,
+            )
+
+        bm.to_mesh(work_obj.data)
+        bm.free()
+        work_obj.data.update()
+
+        if s.uvw_copy_material and ref_tile.data.materials:
+            work_obj.data.materials.clear()
+            for mat in ref_tile.data.materials:
+                work_obj.data.materials.append(mat)
+
+        bpy.ops.object.select_all(action='DESELECT')
+        work_obj.select_set(True)
+        context.view_layer.objects.active = work_obj
+
+        # ── Cleanup ───────────────────────────────────────────────────────────
+        _delete_uvw_gizmo(s)
+        s.uvw_target         = None
+        s.uvw_reference_tile = None
+
+        self.report({'INFO'}, f"UVW Map ({mapping}) applied → {work_obj.name}")
+        return {'FINISHED'}
+
+
 # ── Panel ─────────────────────────────────────────────────────────────────────
 
 class TC_PT_Main(Panel):
@@ -1372,6 +1920,43 @@ class TC_PT_CylinderProjection(Panel):
         row.operator("tilecutter.apply_cylinder", icon='MESH_CYLINDER')
 
 
+class TC_PT_UVWMapProjection(Panel):
+    bl_label = "UVW Map Projection"
+    bl_idname = "TC_PT_UVW_MAP_PROJECTION"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Tile Cutter'
+    bl_parent_id = "TC_PT_MAIN"
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.tc_settings
+
+        layout.prop(s, "uvw_target", icon='MESH_DATA')
+        layout.prop(s, "uvw_reference_tile", icon='UV')
+        layout.prop(s, "uvw_mapping_type")
+
+        col = layout.column(align=True)
+        col.prop(s, "uvw_tile_u")
+        col.prop(s, "uvw_tile_v")
+
+        row = layout.row(align=True)
+        row.prop(s, "uvw_flip_u", toggle=True)
+        row.prop(s, "uvw_flip_v", toggle=True)
+
+        layout.prop(s, "uvw_duplicate_before_apply")
+        layout.prop(s, "uvw_copy_material")
+
+        if s.uvw_gizmo is not None:
+            layout.label(text="UVW Gizmo: move / rotate / scale it")
+        layout.operator("tilecutter.select_uvw_gizmo",
+                        text="Select / Create UVW Gizmo", icon='EMPTY_ARROWS')
+
+        row = layout.row()
+        row.scale_y = 1.4
+        row.operator("tilecutter.apply_uvw_map", icon='MOD_UVPROJECT')
+
+
 # Registration
 classes = (
     TC_Settings,
@@ -1379,22 +1964,37 @@ classes = (
     TC_OT_ResetProjBox,
     TC_OT_SelectCylinderControl,
     TC_OT_ApplyCylinder,
+    TC_OT_SelectUVWGizmo,
+    TC_OT_ApplyUVWMap,
     TC_PT_Main,
     TC_PT_TileGrid,
     TC_PT_CylinderProjection,
+    TC_PT_UVWMapProjection,
 )
 
 
 def register():
+    if hasattr(bpy.types.Scene, "tc_settings"):
+        del bpy.types.Scene.tc_settings
     for cls in classes:
+        existing = getattr(bpy.types, cls.__name__, None)
+        if existing is not None:
+            try:
+                bpy.utils.unregister_class(existing)
+            except Exception:
+                pass
         bpy.utils.register_class(cls)
     bpy.types.Scene.tc_settings = PointerProperty(type=TC_Settings)
 
 
 def unregister():
+    if hasattr(bpy.types.Scene, "tc_settings"):
+        del bpy.types.Scene.tc_settings
     for cls in reversed(classes):
-        bpy.utils.unregister_class(cls)
-    del bpy.types.Scene.tc_settings
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
