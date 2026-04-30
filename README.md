@@ -1,43 +1,78 @@
 # Simple Tile Cutter
 
-Blender addon for cutting any mesh with a tile grid and assigning UV coordinates from a reference tile object.
+Blender addon for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, and reference-tile material transfer.
 
 ## Status
 
-Alpha tool for a focused mobile-game asset workflow. Use a flat, lying reference tile plane.
+Alpha version for a narrow production task. The addon is actively tested on flat, lying reference tile planes. Square tiles are the safest option; rectangular tiles are supported, but should be checked visually after projection.
 
-## Recent Changes
+Current version: `0.6.8`
 
-- Added **Stretch Around** for Cylinder Projection. Disabled by default, it keeps the current angular-cut workflow; enabled, it restores the older stretched wrap behavior without changing height cuts or cap projection.
-- Reworked the viewport UI into collapsible Blender sub-panels: **Tile Grid** and **Cylinder Projection**.
+## What Works Now
+
+- Tile Grid mode cuts target meshes into tile-sized sections and projects UVs from a reference tile.
+- Mark Seams and Dissolve non-seamed edges are separate options. Dissolve only works after Mark Seams is enabled.
+- Projection Box can be moved, rotated, and scaled in the viewport.
+- Projection Box preview is built from the reference tile material and matches the projection frame.
+- Cylinder Projection supports height cuts, angular cuts, optional Stretch Around behavior, cap projection, seams, and a viewport Cylinder Control.
+- UVW Map Projection adds no-cut UV projection modes for Box, Planar, and Cylinder.
+- UVW Box and Planar now use no-clamp UV tiling, so large faces repeat the reference tile instead of stretching one tile over the whole face.
 
 ## Modes
 
 ### Tile Grid
-Cuts the target mesh with a bisect grid and projects UVs using a moveable Projection Box empty. The box can be moved, rotated, and scaled in the viewport to align the tiling.
+
+Cuts the target mesh with a bisect grid, then assigns UVs from the reference tile.
+
+Use this mode when the mesh should physically receive tile-sized geometry cuts. The Projection Box empty defines the projection frame. Move, rotate, or scale it before applying.
 
 ### Cylinder Projection
-Cuts the mesh into height bands and angular sectors, then assigns cylindrical UVs. A Cylinder Control empty drives the projection frame.
 
-### UVW Map Projection _(new — first iteration)_
-Projects UVs onto a target mesh **without cutting the geometry**. Works like 3ds Max UVW Map: a gizmo object defines the projection frame and can be freely moved, rotated, and scaled in the viewport before applying.
+Projects a tile texture onto cylindrical meshes and can cut the mesh into height bands and angular sectors.
 
-**Mapping types:**
-- **Box** — cubic projection; each face picks the nearest box face by its normal, then receives UVs from the two perpendicular local axes. Handles any mesh orientation correctly.
-- **Planar** — flat projection from the gizmo's local XY plane.
-- **Cylinder** — wraps UVs around the gizmo's local Z axis; `Tiles Around` controls how many reference tiles repeat around the full circumference, and V repeats by tile height.
+Use this mode when the cylinder should be prepared with real geometry cuts and seams. The Cylinder Control empty defines the projection frame. `Tiles Around` controls how many tiles wrap around the circumference.
 
-**Workflow:**
-1. Pick Target Mesh and Reference Tile — a gizmo preview object appears automatically.
-2. Select the UVW Gizmo and move / rotate / scale it to position the projection.
-3. Box and Planar mapping use the Reference Tile dimensions for tile scale.
-4. Cylinder mapping uses Tile Size X / Tile Size Y plus `Tiles Around` to choose how many tiles wrap around the full circumference.
-5. Toggle U Flip / V Flip if needed.
-6. Enable *Duplicate Before Apply* to keep the original untouched.
-7. Enable *Copy Material From Reference* to transfer the tile material onto the result.
-8. Click **Apply UVW Map** — UVs are written to the `UVMap` layer and the gizmo is removed.
+### UVW Map Projection
 
-## Known Limitations
+Projects UVs without cutting the mesh.
 
-- Texel density is not fully normalized yet. Wall/box and cylinder projection can still need manual checking when matching texture scale across different shapes.
-- UVW Map Projection does not cut the mesh; texture repeats through UV tiling, so seam placement depends on existing geometry edges.
+Use this mode when you want classic UVW-style projection from a viewport gizmo while leaving the mesh topology unchanged.
+
+Mapping types:
+
+- `Box`: cubic projection from the UVW Gizmo local axes.
+- `Planar`: flat projection from the UVW Gizmo local XY plane.
+- `Cylinder`: cylindrical projection around the UVW Gizmo local Z axis.
+
+Workflow:
+
+1. Pick `Target Mesh`.
+2. Pick a flat, lying `Reference Tile`.
+3. Choose `Box`, `Planar`, or `Cylinder`.
+4. Use `Select / Create UVW Gizmo`.
+5. Move, rotate, or scale the UVW Gizmo in the viewport.
+6. Set `Tiles Around` for UVW Cylinder if needed.
+7. Toggle `U Flip` or `V Flip` if the texture direction is wrong.
+8. Keep `Duplicate Before Apply` enabled if the original mesh should stay untouched.
+9. Keep `Copy Material From Reference` enabled if the result should receive the reference material.
+10. Click `Apply UVW Map`.
+
+## Known Limitations / TODO
+
+- UVW Cylinder currently projects the side wrap only. Cap projection for UVW Cylinder still needs to be added.
+- Texel density across different projection modes still needs manual checking in some scenes.
+- UVW Map Projection does not create new geometry cuts, so visible texture boundaries depend on the existing mesh and the material's repeat behavior.
+- Rectangular tiles are supported, but square tiles remain the recommended production-safe path.
+
+## Installation
+
+1. Remove the old `modwall_gn` addon folder from Blender's addon directory if needed.
+2. Install the zip through Blender Preferences > Add-ons > Install.
+3. Enable `Simple Tile Cutter`.
+4. If Blender keeps old code in memory, use `F3 > Reload Scripts` or restart Blender.
+
+## Development Notes
+
+- Do not change Tile Grid or Cylinder Projection when working on UVW Map Projection unless the task explicitly requires it.
+- Tile Grid and Cylinder Projection are working production modes and should be treated as reference behavior.
+- UVW Map Projection should stay additive: it writes UVs and optionally copies material, but does not cut geometry.
