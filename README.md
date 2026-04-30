@@ -30,8 +30,8 @@ Projects UVs onto a target mesh **without cutting the geometry**. Works like 3ds
 **Workflow:**
 1. Pick Target Mesh and Reference Tile — a gizmo preview object appears automatically.
 2. Select the UVW Gizmo and move / rotate / scale it to position the projection.
-3. Set the shared Tile Size X / Tile Size Y values in the Tile Grid section. UVW Map Projection uses the same tile size, without separate U/V size fields.
-4. For Cylinder mapping, set `Tiles Around` to choose how many tiles wrap around the full circumference.
+3. Box and Planar mapping use the Reference Tile dimensions for tile scale.
+4. Cylinder mapping uses Tile Size X / Tile Size Y plus `Tiles Around` to choose how many tiles wrap around the full circumference.
 5. Toggle U Flip / V Flip if needed.
 6. Enable *Duplicate Before Apply* to keep the original untouched.
 7. Enable *Copy Material From Reference* to transfer the tile material onto the result.

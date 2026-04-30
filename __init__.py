@@ -896,91 +896,100 @@ def _sync_uvw_gizmo(self, context):
 
 # ── UVW Map UV projection functions ──────────────────────────────────────────
 
-def _apply_uvw_box_uv(bm, gizmo_inv, tile_u, tile_v, flip_u, flip_v, b_min, b_max):
+def _apply_uvw_box_uv(bm, b_min, b_max, tile_u, tile_v, gizmo_local_mat):
+    rot_mat = gizmo_local_mat.to_3x3()
+    ax_x = rot_mat.col[0].normalized()
+    ax_y = rot_mat.col[1].normalized()
+    ax_z = rot_mat.col[2].normalized()
+    box_origin = gizmo_local_mat.to_translation()
+    return _apply_tile_uvs(
+        bm, b_min, b_max,
+        tile_u, tile_v,
+        box_origin, ax_x, ax_y, ax_z,
+    )
+
+
+def _apply_uvw_planar_uv(bm, b_min, b_max, tile_u, tile_v, gizmo_local_mat,
+                         flip_u=False, flip_v=False):
     uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
     tile_u = max(tile_u, 0.001)
     tile_v = max(tile_v, 0.001)
-    rot_inv = gizmo_inv.to_3x3()
+
+    rot_mat = gizmo_local_mat.to_3x3()
+    ax_u = rot_mat.col[0].normalized()
+    ax_v = rot_mat.col[1].normalized()
+    origin = gizmo_local_mat.to_translation()
 
     for face in bm.faces:
-        fn_local = rot_inv @ face.normal
-        ax = abs(fn_local.x)
-        ay = abs(fn_local.y)
-        az = abs(fn_local.z)
-
-        if az >= ax and az >= ay:
-            ui, vi = 0, 1   # project onto local XY
-        elif ax >= ay:
-            ui, vi = 1, 2   # project onto local YZ
-        else:
-            ui, vi = 0, 2   # project onto local XZ
+        c = face.calc_center_median() - origin
+        cu = math.floor(c.dot(ax_u) / tile_u + 0.5)
+        cv = math.floor(c.dot(ax_v) / tile_v + 0.5)
 
         for loop in face.loops:
-            co = gizmo_inv @ loop.vert.co
-            uf = co[ui] / tile_u
-            vf = co[vi] / tile_v
-            if flip_u: uf = 1.0 - uf
-            if flip_v: vf = 1.0 - vf
+            p = loop.vert.co - origin
+            pu = p.dot(ax_u)
+            pv = p.dot(ax_v)
+            uf = max(0.0, min(1.0, (pu - (cu - 0.5) * tile_u) / tile_u))
+            vf = max(0.0, min(1.0, (pv - (cv - 0.5) * tile_v) / tile_v))
+            if flip_u:
+                uf = 1.0 - uf
+            if flip_v:
+                vf = 1.0 - vf
             loop[uv_layer].uv = (
                 b_min[0] + uf * (b_max[0] - b_min[0]),
                 b_min[1] + vf * (b_max[1] - b_min[1]),
             )
 
 
-def _apply_uvw_planar_uv(bm, gizmo_inv, tile_u, tile_v, flip_u, flip_v, b_min, b_max):
-    uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
-    tile_u = max(tile_u, 0.001)
-    tile_v = max(tile_v, 0.001)
-
-    for face in bm.faces:
-        for loop in face.loops:
-            co = gizmo_inv @ loop.vert.co
-            uf = co.x / tile_u
-            vf = co.y / tile_v
-            if flip_u: uf = 1.0 - uf
-            if flip_v: vf = 1.0 - vf
-            loop[uv_layer].uv = (
-                b_min[0] + uf * (b_max[0] - b_min[0]),
-                b_min[1] + vf * (b_max[1] - b_min[1]),
-            )
-
-
-def _apply_uvw_cylinder_uv(bm, gizmo_inv, tiles_around, tile_v,
+def _apply_uvw_cylinder_uv(bm, gizmo_local_mat, tiles_around, tile_v,
                             flip_u, flip_v, b_min, b_max):
     """Cylindrical projection around local Z of gizmo.
     tiles_around = number of texture repeats around the full circumference.
-    tile_v = world height of one V tile.
+    tile_v = target-local height of one V tile.
     """
     uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
     tiles_around = max(tiles_around, 1)
     tile_v = max(tile_v, 0.001)
     angle_per_tile = 2.0 * math.pi / tiles_around
 
+    rot_mat = gizmo_local_mat.to_3x3()
+    ax_x = rot_mat.col[0].normalized()
+    ax_y = rot_mat.col[1].normalized()
+    ax_z = rot_mat.col[2].normalized()
+    origin = gizmo_local_mat.to_translation()
+
     for face in bm.faces:
-        fc = gizmo_inv @ face.calc_center_median()
-        angle_c = math.atan2(fc.y, fc.x)
+        fc = face.calc_center_median() - origin
+        fc_x = fc.dot(ax_x)
+        fc_y = fc.dot(ax_y)
+        angle_c = math.atan2(fc_y, fc_x)
         if angle_c < 0.0:
             angle_c += 2.0 * math.pi
 
         for loop in face.loops:
-            co = gizmo_inv @ loop.vert.co
-            angle_v = math.atan2(co.y, co.x)
+            p = loop.vert.co - origin
+            p_x = p.dot(ax_x)
+            p_y = p.dot(ax_y)
+            p_z = p.dot(ax_z)
+            angle_v = math.atan2(p_y, p_x)
             if angle_v < 0.0:
                 angle_v += 2.0 * math.pi
             delta = angle_v - angle_c
-            if delta >  math.pi: delta -= 2.0 * math.pi
-            if delta < -math.pi: delta += 2.0 * math.pi
+            if delta >  math.pi:
+                delta -= 2.0 * math.pi
+            if delta < -math.pi:
+                delta += 2.0 * math.pi
             uf = (angle_c + delta) / angle_per_tile
-            vf = co.z / tile_v
-            if flip_u: uf = 1.0 - uf
-            if flip_v: vf = 1.0 - vf
+            vf = p_z / tile_v + 0.5
+            if flip_u:
+                uf = 1.0 - uf
+            if flip_v:
+                vf = 1.0 - vf
             loop[uv_layer].uv = (
                 b_min[0] + uf * (b_max[0] - b_min[0]),
                 b_min[1] + vf * (b_max[1] - b_min[1]),
             )
 
-
-# ── Box Tile Preview (existing) ───────────────────────────────────────────────
 
 def _delete_tile_preview(s):
     for attr in ("tile_preview", "tile_preview_wire"):
@@ -1746,10 +1755,9 @@ class TC_OT_ApplyUVWMap(Operator):
             return {'CANCELLED'}
 
         b_min, b_max = get_tile_bounds(ref_tile)
-        tile_u, tile_v = _uvw_tile_sizes_from_settings(s)
 
         gizmo_local_mat = target.matrix_world.inverted() @ gizmo.matrix_world
-        gizmo_inv       = gizmo_local_mat.inverted()
+        gizmo_scale     = gizmo_local_mat.to_scale()
 
         # ── Duplicate or work in-place ────────────────────────────────────────
         if s.uvw_duplicate_before_apply:
@@ -1767,18 +1775,22 @@ class TC_OT_ApplyUVWMap(Operator):
 
         mapping = s.uvw_mapping_type
         if mapping == 'BOX':
+            tile_u = max(abs(gizmo_scale.x), 0.001)
+            tile_v = max(abs(gizmo_scale.z), 0.001)
             _apply_uvw_box_uv(
-                bm, gizmo_inv, tile_u, tile_v,
-                s.uvw_flip_u, s.uvw_flip_v, b_min, b_max,
+                bm, b_min, b_max, tile_u, tile_v, gizmo_local_mat,
             )
         elif mapping == 'PLANAR':
+            tile_u = max(abs(gizmo_scale.x), 0.001)
+            tile_v = max(abs(gizmo_scale.y), 0.001)
             _apply_uvw_planar_uv(
-                bm, gizmo_inv, tile_u, tile_v,
-                s.uvw_flip_u, s.uvw_flip_v, b_min, b_max,
+                bm, b_min, b_max, tile_u, tile_v, gizmo_local_mat,
+                s.uvw_flip_u, s.uvw_flip_v,
             )
         else:  # CYLINDER
+            tile_v = max(abs(gizmo_scale.z), 0.001)
             _apply_uvw_cylinder_uv(
-                bm, gizmo_inv, s.uvw_cylinder_tiles_around, tile_v,
+                bm, gizmo_local_mat, s.uvw_cylinder_tiles_around, tile_v,
                 s.uvw_flip_u, s.uvw_flip_v, b_min, b_max,
             )
 
