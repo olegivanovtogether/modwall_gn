@@ -673,6 +673,10 @@ def _uvw_reference_tile_sizes(ref):
     return 1.0, 1.0
 
 
+def _uvw_tile_sizes_from_settings(s):
+    return max(s.tile_size_x, 0.001), max(s.tile_size_y, 0.001)
+
+
 def _uvw_preview_box(context, s, gizmo, ref):
     verts = (
         (-0.5, -0.5, -0.5), ( 0.5, -0.5, -0.5),
@@ -853,14 +857,15 @@ def _create_uvw_gizmo(context, s):
     gizmo.matrix_parent_inverse.identity()
     gizmo.location = gizmo.rotation_euler = (0.0, 0.0, 0.0)
 
-    tile_u, tile_v = _uvw_reference_tile_sizes(ref)
+    tile_u, tile_v = _uvw_tile_sizes_from_settings(s)
     depth = max(min(tile_u, tile_v), 0.25)
     if mapping == 'PLANAR':
         gizmo.scale = (tile_u, tile_v, 1.0)
     elif mapping == 'BOX':
-        gizmo.scale = (tile_u, depth, tile_v)
-    else:  # CYLINDER
         gizmo.scale = (tile_u, tile_u, tile_v)
+    else:  # CYLINDER
+        radius = max((tile_u * max(s.uvw_cylinder_tiles_around, 1)) / (2.0 * math.pi), 0.001)
+        gizmo.scale = (radius, radius, tile_v)
 
     gizmo.hide_render = True
     gizmo.show_in_front = True
@@ -884,9 +889,6 @@ def _create_uvw_gizmo(context, s):
 def _sync_uvw_gizmo(self, context):
     s = context.scene.tc_settings
     if s.uvw_target is not None and s.uvw_reference_tile is not None:
-        tile_u, tile_v = _uvw_reference_tile_sizes(s.uvw_reference_tile)
-        s.uvw_tile_u = tile_u
-        s.uvw_tile_v = tile_v
         _create_uvw_gizmo(context, s)
     else:
         _delete_uvw_gizmo(s)
@@ -913,14 +915,10 @@ def _apply_uvw_box_uv(bm, gizmo_inv, tile_u, tile_v, flip_u, flip_v, b_min, b_ma
         else:
             ui, vi = 0, 2   # project onto local XZ
 
-        fc = gizmo_inv @ face.calc_center_median()
-        cell_u = math.floor(fc[ui] / tile_u + 0.5)
-        cell_v = math.floor(fc[vi] / tile_v + 0.5)
-
         for loop in face.loops:
             co = gizmo_inv @ loop.vert.co
-            uf = (co[ui] - (cell_u - 0.5) * tile_u) / tile_u
-            vf = (co[vi] - (cell_v - 0.5) * tile_v) / tile_v
+            uf = co[ui] / tile_u
+            vf = co[vi] / tile_v
             if flip_u: uf = 1.0 - uf
             if flip_v: vf = 1.0 - vf
             loop[uv_layer].uv = (
@@ -935,14 +933,10 @@ def _apply_uvw_planar_uv(bm, gizmo_inv, tile_u, tile_v, flip_u, flip_v, b_min, b
     tile_v = max(tile_v, 0.001)
 
     for face in bm.faces:
-        fc = gizmo_inv @ face.calc_center_median()
-        cell_u = math.floor(fc.x / tile_u + 0.5)
-        cell_v = math.floor(fc.y / tile_v + 0.5)
-
         for loop in face.loops:
             co = gizmo_inv @ loop.vert.co
-            uf = (co.x - (cell_u - 0.5) * tile_u) / tile_u
-            vf = (co.y - (cell_v - 0.5) * tile_v) / tile_v
+            uf = co.x / tile_u
+            vf = co.y / tile_v
             if flip_u: uf = 1.0 - uf
             if flip_v: vf = 1.0 - vf
             loop[uv_layer].uv = (
@@ -951,26 +945,22 @@ def _apply_uvw_planar_uv(bm, gizmo_inv, tile_u, tile_v, flip_u, flip_v, b_min, b
             )
 
 
-def _apply_uvw_cylinder_uv(bm, gizmo_inv, gizmo_scale_xy, tile_u, tile_v,
+def _apply_uvw_cylinder_uv(bm, gizmo_inv, tiles_around, tile_v,
                             flip_u, flip_v, b_min, b_max):
     """Cylindrical projection around local Z of gizmo.
-    tile_u = arc-length world size of one U tile (circumference / tile_u = repeats).
+    tiles_around = number of texture repeats around the full circumference.
     tile_v = world height of one V tile.
     """
     uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
-    tile_u = max(tile_u, 0.001)
+    tiles_around = max(tiles_around, 1)
     tile_v = max(tile_v, 0.001)
-    circumference = 2.0 * math.pi * gizmo_scale_xy
-    angle_per_tile = (tile_u / circumference) * 2.0 * math.pi if circumference > 0.001 else 2.0 * math.pi
+    angle_per_tile = 2.0 * math.pi / tiles_around
 
     for face in bm.faces:
         fc = gizmo_inv @ face.calc_center_median()
         angle_c = math.atan2(fc.y, fc.x)
         if angle_c < 0.0:
             angle_c += 2.0 * math.pi
-        cell_u = math.floor(angle_c / angle_per_tile)
-        cell_start = cell_u * angle_per_tile
-        cell_v = math.floor(fc.z / tile_v + 0.5)
 
         for loop in face.loops:
             co = gizmo_inv @ loop.vert.co
@@ -980,13 +970,13 @@ def _apply_uvw_cylinder_uv(bm, gizmo_inv, gizmo_scale_xy, tile_u, tile_v,
             delta = angle_v - angle_c
             if delta >  math.pi: delta -= 2.0 * math.pi
             if delta < -math.pi: delta += 2.0 * math.pi
-            uf = (angle_c + delta - cell_start) / angle_per_tile
-            vf = (co.z - (cell_v - 0.5) * tile_v) / tile_v
+            uf = (angle_c + delta) / angle_per_tile
+            vf = co.z / tile_v
             if flip_u: uf = 1.0 - uf
             if flip_v: vf = 1.0 - vf
             loop[uv_layer].uv = (
-                b_min[0] + max(0.0, min(1.0, uf)) * (b_max[0] - b_min[0]),
-                b_min[1] + max(0.0, min(1.0, vf)) * (b_max[1] - b_min[1]),
+                b_min[0] + uf * (b_max[0] - b_min[0]),
+                b_min[1] + vf * (b_max[1] - b_min[1]),
             )
 
 
@@ -1333,6 +1323,12 @@ class TC_Settings(PropertyGroup):
         default='BOX',
         update=_sync_uvw_gizmo,
     )
+    uvw_cylinder_tiles_around: IntProperty(
+        name="Tiles Around",
+        description="How many reference tiles repeat around the full UVW cylinder",
+        default=1, min=1, max=64,
+        update=_sync_uvw_gizmo,
+    )
     uvw_duplicate_before_apply: BoolProperty(
         name="Duplicate Before Apply",
         description="Work on a copy; original mesh is left untouched",
@@ -1342,18 +1338,6 @@ class TC_Settings(PropertyGroup):
         name="Copy Material From Reference",
         description="Replace target materials with the reference tile materials after Apply",
         default=True,
-    )
-    uvw_tile_u: FloatProperty(
-        name="U Tile Size",
-        description="World-space width of one UV tile along U",
-        default=1.0, min=0.001, max=100.0,
-        unit='LENGTH',
-    )
-    uvw_tile_v: FloatProperty(
-        name="V Tile Size",
-        description="World-space height of one UV tile along V",
-        default=1.0, min=0.001, max=100.0,
-        unit='LENGTH',
     )
     uvw_flip_u: BoolProperty(
         name="U Flip",
@@ -1762,8 +1746,7 @@ class TC_OT_ApplyUVWMap(Operator):
             return {'CANCELLED'}
 
         b_min, b_max = get_tile_bounds(ref_tile)
-        tile_u = max(s.uvw_tile_u, 0.001)
-        tile_v = max(s.uvw_tile_v, 0.001)
+        tile_u, tile_v = _uvw_tile_sizes_from_settings(s)
 
         gizmo_local_mat = target.matrix_world.inverted() @ gizmo.matrix_world
         gizmo_inv       = gizmo_local_mat.inverted()
@@ -1794,10 +1777,8 @@ class TC_OT_ApplyUVWMap(Operator):
                 s.uvw_flip_u, s.uvw_flip_v, b_min, b_max,
             )
         else:  # CYLINDER
-            scl = gizmo_local_mat.to_scale()
-            radius = max((abs(scl.x) + abs(scl.y)) * 0.5, 0.001)
             _apply_uvw_cylinder_uv(
-                bm, gizmo_inv, radius, tile_u, tile_v,
+                bm, gizmo_inv, s.uvw_cylinder_tiles_around, tile_v,
                 s.uvw_flip_u, s.uvw_flip_v, b_min, b_max,
             )
 
@@ -1935,10 +1916,8 @@ class TC_PT_UVWMapProjection(Panel):
         layout.prop(s, "uvw_target", icon='MESH_DATA')
         layout.prop(s, "uvw_reference_tile", icon='UV')
         layout.prop(s, "uvw_mapping_type")
-
-        col = layout.column(align=True)
-        col.prop(s, "uvw_tile_u")
-        col.prop(s, "uvw_tile_v")
+        if s.uvw_mapping_type == 'CYLINDER':
+            layout.prop(s, "uvw_cylinder_tiles_around")
 
         row = layout.row(align=True)
         row.prop(s, "uvw_flip_u", toggle=True)
