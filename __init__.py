@@ -2300,9 +2300,9 @@ class TC_PT_VertexPaintTools(Panel):
         green.color_name = 'GREEN'
         blue = row.operator("tilecutter.set_vertex_paint_color", text="B", icon='COLORSET_04_VEC')
         blue.color_name = 'BLUE'
-        white = row.operator("tilecutter.set_vertex_paint_color", text="W", icon='LIGHT')
+        white = row.operator("tilecutter.set_vertex_paint_color", text="White")
         white.color_name = 'WHITE'
-        black = row.operator("tilecutter.set_vertex_paint_color", text="K", icon='MATERIAL')
+        black = row.operator("tilecutter.set_vertex_paint_color", text="Black")
         black.color_name = 'BLACK'
 
         custom_row = controls.row(align=True)
