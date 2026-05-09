@@ -1193,6 +1193,35 @@ def _sync_seam_options(self, context):
         self.dissolve_non_seamed_edges = False
 
 
+def _sync_vertex_paint_settings(self, context):
+    obj = context.object
+    if obj is None or obj.type != 'MESH' or obj.mode != 'VERTEX_PAINT':
+        return
+
+    brush = getattr(context, "brush", None)
+    if brush is None:
+        brush = context.tool_settings.vertex_paint.brush
+    if brush is None:
+        return
+
+    unified = context.tool_settings.unified_paint_settings
+    if hasattr(unified, "use_unified_size"):
+        unified.use_unified_size = True
+    if hasattr(unified, "use_unified_strength"):
+        unified.use_unified_strength = True
+    unified.size = self.vp_brush_size
+    unified.strength = self.vp_brush_strength
+
+    brush.size = self.vp_brush_size
+    brush.strength = self.vp_brush_strength
+    if hasattr(brush, "hardness"):
+        brush.hardness = self.vp_brush_hardness
+    if hasattr(brush, "use_alpha"):
+        brush.use_alpha = True
+
+    for area in context.screen.areas:
+        area.tag_redraw()
+
 class TC_Settings(PropertyGroup):
     target_object: PointerProperty(
         name="Target Wall",
@@ -1407,10 +1436,19 @@ class TC_Settings(PropertyGroup):
         name="Custom",
         description="Custom vertex paint color",
         subtype='COLOR',
-        size=3,
+        size=4,
         min=0.0,
         max=1.0,
-        default=(1.0, 1.0, 1.0),
+        default=(1.0, 1.0, 1.0, 1.0),
+    )
+    vp_alpha: FloatProperty(
+        name="Alpha",
+        description="Alpha value used for vertex color fill and alpha-aware painting",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+        update=_sync_vertex_paint_settings,
     )
     vp_brush_size: IntProperty(
         name="Radius",
@@ -1418,6 +1456,7 @@ class TC_Settings(PropertyGroup):
         default=35,
         min=1,
         max=5000,
+        update=_sync_vertex_paint_settings,
     )
     vp_brush_hardness: FloatProperty(
         name="Inner",
@@ -1426,6 +1465,7 @@ class TC_Settings(PropertyGroup):
         min=0.0,
         max=1.0,
         subtype='FACTOR',
+        update=_sync_vertex_paint_settings,
     )
     vp_brush_strength: FloatProperty(
         name="Strength",
@@ -1434,8 +1474,8 @@ class TC_Settings(PropertyGroup):
         min=0.0,
         max=1.0,
         subtype='FACTOR',
+        update=_sync_vertex_paint_settings,
     )
-
 
 # ── Operator: Apply ───────────────────────────────────────────────────────────
 
@@ -1935,23 +1975,33 @@ def _apply_vertex_paint_brush(context, color):
     if brush is None:
         return None
 
+    rgb = color[:3]
+    alpha = color[3] if len(color) > 3 else s.vp_alpha
     unified = context.tool_settings.unified_paint_settings
     unified.use_unified_color = True
-    unified.color = color
+    if hasattr(unified, "use_unified_size"):
+        unified.use_unified_size = True
+    if hasattr(unified, "use_unified_strength"):
+        unified.use_unified_strength = True
+    unified.color = rgb
     unified.size = s.vp_brush_size
     unified.strength = s.vp_brush_strength
 
     brush.color_type = 'COLOR'
-    brush.color = color
+    brush.color = rgb
     brush.size = s.vp_brush_size
     brush.strength = s.vp_brush_strength
+    if hasattr(brush, "use_alpha"):
+        brush.use_alpha = True
     if hasattr(brush, "hardness"):
         brush.hardness = s.vp_brush_hardness
     if hasattr(brush, "vertex_tool"):
         brush.vertex_tool = 'DRAW'
+    s.vp_alpha = alpha
     for area in context.screen.areas:
         area.tag_redraw()
     return brush
+
 
 def _prepare_vertex_paint(context, color):
     obj = _active_mesh_object(context)
@@ -1965,15 +2015,15 @@ def _prepare_vertex_paint(context, color):
 
 
 def _current_vertex_paint_color(context):
+    alpha = context.scene.tc_settings.vp_alpha
     unified = context.tool_settings.unified_paint_settings
     if unified.use_unified_color:
-        return (unified.color.r, unified.color.g, unified.color.b, 1.0)
+        return (unified.color.r, unified.color.g, unified.color.b, alpha)
     brush = _vertex_paint_brush(context)
     if brush is not None:
-        return (brush.color.r, brush.color.g, brush.color.b, 1.0)
+        return (brush.color.r, brush.color.g, brush.color.b, alpha)
     color = context.scene.tc_settings.vp_custom_color
-    return (color[0], color[1], color[2], 1.0)
-
+    return (color[0], color[1], color[2], color[3])
 class TC_OT_SetVertexPaintColor(Operator):
     bl_idname = "tilecutter.set_vertex_paint_color"
     bl_label = "Set Vertex Paint Color"
@@ -1985,6 +2035,8 @@ class TC_OT_SetVertexPaintColor(Operator):
             ('RED', "Red", "Use pure red"),
             ('GREEN', "Green", "Use pure green"),
             ('BLUE', "Blue", "Use pure blue"),
+            ('WHITE', "White", "Use pure white"),
+            ('BLACK', "Black", "Use pure black"),
             ('CUSTOM', "Custom", "Use the custom color"),
         ],
         default='RED',
@@ -1997,9 +2049,11 @@ class TC_OT_SetVertexPaintColor(Operator):
     def execute(self, context):
         s = context.scene.tc_settings
         colors = {
-            'RED': (1.0, 0.0, 0.0),
-            'GREEN': (0.0, 1.0, 0.0),
-            'BLUE': (0.0, 0.0, 1.0),
+            'RED': (1.0, 0.0, 0.0, s.vp_alpha),
+            'GREEN': (0.0, 1.0, 0.0, s.vp_alpha),
+            'BLUE': (0.0, 0.0, 1.0, s.vp_alpha),
+            'WHITE': (1.0, 1.0, 1.0, s.vp_alpha),
+            'BLACK': (0.0, 0.0, 0.0, s.vp_alpha),
             'CUSTOM': tuple(s.vp_custom_color),
         }
         obj, brush = _prepare_vertex_paint(context, colors[self.color_name])
@@ -2238,12 +2292,18 @@ class TC_PT_VertexPaintTools(Panel):
         controls.enabled = ready
 
         row = controls.row(align=True)
-        red = row.operator("tilecutter.set_vertex_paint_color", text="", icon='COLORSET_01_VEC')
+        row.scale_x = 1.7
+        row.scale_y = 3.0
+        red = row.operator("tilecutter.set_vertex_paint_color", text="R", icon='COLORSET_01_VEC')
         red.color_name = 'RED'
-        green = row.operator("tilecutter.set_vertex_paint_color", text="", icon='COLORSET_03_VEC')
+        green = row.operator("tilecutter.set_vertex_paint_color", text="G", icon='COLORSET_03_VEC')
         green.color_name = 'GREEN'
-        blue = row.operator("tilecutter.set_vertex_paint_color", text="", icon='COLORSET_04_VEC')
+        blue = row.operator("tilecutter.set_vertex_paint_color", text="B", icon='COLORSET_04_VEC')
         blue.color_name = 'BLUE'
+        white = row.operator("tilecutter.set_vertex_paint_color", text="W", icon='LIGHT')
+        white.color_name = 'WHITE'
+        black = row.operator("tilecutter.set_vertex_paint_color", text="K", icon='MATERIAL')
+        black.color_name = 'BLACK'
 
         custom_row = controls.row(align=True)
         custom_row.prop(s, "vp_custom_color", text="")
@@ -2254,6 +2314,7 @@ class TC_PT_VertexPaintTools(Panel):
         col.prop(s, "vp_brush_size")
         col.prop(s, "vp_brush_hardness")
         col.prop(s, "vp_brush_strength")
+        col.prop(s, "vp_alpha")
         col.operator("tilecutter.sync_vertex_paint_brush", icon='BRUSH_DATA')
 
         fill_row = controls.row(align=True)
@@ -2261,7 +2322,6 @@ class TC_PT_VertexPaintTools(Panel):
         selected.selected_only = True
         obj = fill_row.operator("tilecutter.fill_vertex_paint_color", text="Fill Object", icon='SHADING_SOLID')
         obj.selected_only = False
-
 # Registration
 classes = (
     TC_Settings,
