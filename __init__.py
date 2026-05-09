@@ -13,7 +13,14 @@ import bmesh
 import math
 import importlib
 from mathutils import Matrix, Vector
-from bpy.props import FloatProperty, BoolProperty, PointerProperty, IntProperty, EnumProperty
+from bpy.props import (
+    FloatProperty,
+    FloatVectorProperty,
+    BoolProperty,
+    PointerProperty,
+    IntProperty,
+    EnumProperty,
+)
 from bpy.types import Panel, Operator, PropertyGroup
 
 from . import bmesh_baker
@@ -1395,6 +1402,39 @@ class TC_Settings(PropertyGroup):
         type=bpy.types.Object,
         poll=lambda self, obj: obj.type == 'MESH',
     )
+    # Vertex Paint Tools
+    vp_custom_color: FloatVectorProperty(
+        name="Custom",
+        description="Custom vertex paint color",
+        subtype='COLOR',
+        size=3,
+        min=0.0,
+        max=1.0,
+        default=(1.0, 1.0, 1.0),
+    )
+    vp_brush_size: IntProperty(
+        name="Radius",
+        description="Outer brush radius in screen pixels",
+        default=35,
+        min=1,
+        max=5000,
+    )
+    vp_brush_hardness: FloatProperty(
+        name="Inner",
+        description="Inner hard area of the brush falloff",
+        default=0.75,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    )
+    vp_brush_strength: FloatProperty(
+        name="Strength",
+        description="Vertex paint brush strength",
+        default=1.0,
+        min=0.0,
+        max=1.0,
+        subtype='FACTOR',
+    )
 
 
 # ── Operator: Apply ───────────────────────────────────────────────────────────
@@ -1841,6 +1881,214 @@ class TC_OT_ApplyUVWMap(Operator):
 
 # ── Panel ─────────────────────────────────────────────────────────────────────
 
+
+def _active_mesh_object(context):
+    obj = context.object
+    if obj is None or obj.type != 'MESH':
+        return None
+    return obj
+
+
+def _ensure_vertex_color_attribute(obj, name="TC_VertexColor"):
+    mesh = obj.data
+    attr = mesh.color_attributes.active_color
+    if attr is None:
+        attr = mesh.color_attributes.get(name)
+    if attr is None:
+        attr = mesh.color_attributes.new(
+            name=name,
+            type='BYTE_COLOR',
+            domain='CORNER',
+        )
+
+    for index, color_attr in enumerate(mesh.color_attributes):
+        if color_attr == attr:
+            mesh.color_attributes.active_color_index = index
+            mesh.color_attributes.render_color_index = index
+            break
+    mesh.color_attributes.active_color_name = attr.name
+    mesh.color_attributes.default_color_name = attr.name
+    return attr
+
+
+def _is_vertex_paint_ready(context):
+    obj = _active_mesh_object(context)
+    return obj is not None and obj.mode == 'VERTEX_PAINT'
+
+
+def _vertex_paint_brush(context):
+    brush = getattr(context, "brush", None)
+    if brush is None:
+        brush = context.tool_settings.vertex_paint.brush
+    if brush is None:
+        return None
+    try:
+        brush.use_paint_vertex = True
+    except Exception:
+        pass
+    return brush
+
+
+def _apply_vertex_paint_brush(context, color):
+    s = context.scene.tc_settings
+    brush = _vertex_paint_brush(context)
+    if brush is None:
+        return None
+
+    unified = context.tool_settings.unified_paint_settings
+    unified.use_unified_color = True
+    unified.color = color
+    unified.size = s.vp_brush_size
+    unified.strength = s.vp_brush_strength
+
+    brush.color_type = 'COLOR'
+    brush.color = color
+    brush.size = s.vp_brush_size
+    brush.strength = s.vp_brush_strength
+    if hasattr(brush, "hardness"):
+        brush.hardness = s.vp_brush_hardness
+    if hasattr(brush, "vertex_tool"):
+        brush.vertex_tool = 'DRAW'
+    for area in context.screen.areas:
+        area.tag_redraw()
+    return brush
+
+def _prepare_vertex_paint(context, color):
+    obj = _active_mesh_object(context)
+    if obj is None or obj.mode != 'VERTEX_PAINT':
+        return None, None
+    bpy.ops.object.mode_set(mode='OBJECT')
+    _ensure_vertex_color_attribute(obj)
+    bpy.ops.object.mode_set(mode='VERTEX_PAINT')
+    brush = _apply_vertex_paint_brush(context, color)
+    return obj, brush
+
+
+def _current_vertex_paint_color(context):
+    unified = context.tool_settings.unified_paint_settings
+    if unified.use_unified_color:
+        return (unified.color.r, unified.color.g, unified.color.b, 1.0)
+    brush = _vertex_paint_brush(context)
+    if brush is not None:
+        return (brush.color.r, brush.color.g, brush.color.b, 1.0)
+    color = context.scene.tc_settings.vp_custom_color
+    return (color[0], color[1], color[2], 1.0)
+
+class TC_OT_SetVertexPaintColor(Operator):
+    bl_idname = "tilecutter.set_vertex_paint_color"
+    bl_label = "Set Vertex Paint Color"
+    bl_description = "Set the active vertex paint brush to this color"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    color_name: EnumProperty(
+        items=[
+            ('RED', "Red", "Use pure red"),
+            ('GREEN', "Green", "Use pure green"),
+            ('BLUE', "Blue", "Use pure blue"),
+            ('CUSTOM', "Custom", "Use the custom color"),
+        ],
+        default='RED',
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return _is_vertex_paint_ready(context)
+
+    def execute(self, context):
+        s = context.scene.tc_settings
+        colors = {
+            'RED': (1.0, 0.0, 0.0),
+            'GREEN': (0.0, 1.0, 0.0),
+            'BLUE': (0.0, 0.0, 1.0),
+            'CUSTOM': tuple(s.vp_custom_color),
+        }
+        obj, brush = _prepare_vertex_paint(context, colors[self.color_name])
+        if obj is None or brush is None:
+            self.report({'WARNING'}, "Switch to Vertex Paint mode first")
+            return {'CANCELLED'}
+        self.report({'INFO'}, "Vertex paint color ready")
+        return {'FINISHED'}
+
+
+class TC_OT_SyncVertexPaintBrush(Operator):
+    bl_idname = "tilecutter.sync_vertex_paint_brush"
+    bl_label = "Apply Brush Settings"
+    bl_description = "Apply radius, inner falloff, and strength to the active vertex paint brush"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _is_vertex_paint_ready(context)
+
+    def execute(self, context):
+        color = _current_vertex_paint_color(context)[:3]
+        obj, brush = _prepare_vertex_paint(context, color)
+        if obj is None or brush is None:
+            self.report({'WARNING'}, "Switch to Vertex Paint mode first")
+            return {'CANCELLED'}
+        self.report({'INFO'}, "Vertex paint brush settings applied")
+        return {'FINISHED'}
+
+
+class TC_OT_FillVertexPaintColor(Operator):
+    bl_idname = "tilecutter.fill_vertex_paint_color"
+    bl_label = "Fill Vertex Color"
+    bl_description = "Fill vertex colors with the active paint color"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    selected_only: BoolProperty(
+        name="Selected Only",
+        default=False,
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return _is_vertex_paint_ready(context)
+
+    def execute(self, context):
+        obj = _active_mesh_object(context)
+        if obj is None:
+            self.report({'WARNING'}, "Switch to Vertex Paint mode first")
+            return {'CANCELLED'}
+
+        original_mode = obj.mode
+        if original_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+
+        attr = _ensure_vertex_color_attribute(obj)
+        color = _current_vertex_paint_color(context)
+        mesh = obj.data
+
+        loop_indices = set()
+        if self.selected_only:
+            selected_verts = {v.index for v in mesh.vertices if v.select}
+            selected_polys = [p for p in mesh.polygons if p.select]
+            for poly in selected_polys:
+                loop_indices.update(poly.loop_indices)
+            if selected_verts:
+                for poly in mesh.polygons:
+                    for loop_index in poly.loop_indices:
+                        if mesh.loops[loop_index].vertex_index in selected_verts:
+                            loop_indices.add(loop_index)
+            if not loop_indices:
+                self.report({'WARNING'}, "No selected vertices or faces to fill")
+                if original_mode != 'OBJECT':
+                    bpy.ops.object.mode_set(mode=original_mode)
+                return {'CANCELLED'}
+        else:
+            loop_indices.update(range(len(attr.data)))
+
+        for loop_index in loop_indices:
+            attr.data[loop_index].color = color
+
+        mesh.update()
+        _apply_vertex_paint_brush(context, color[:3])
+        if original_mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode=original_mode)
+
+        self.report({'INFO'}, "Vertex color filled")
+        return {'FINISHED'}
+
 class TC_PT_Main(Panel):
     bl_label = "Tile Cutter"
     bl_idname = "TC_PT_MAIN"
@@ -1970,6 +2218,49 @@ class TC_PT_UVWMapProjection(Panel):
         row.scale_y = 1.4
         row.operator("tilecutter.apply_uvw_map", icon='MOD_UVPROJECT')
 
+class TC_PT_VertexPaintTools(Panel):
+    bl_label = "Vertex Paint Tools"
+    bl_idname = "TC_PT_VERTEX_PAINT_TOOLS"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Tile Cutter'
+    bl_parent_id = "TC_PT_MAIN"
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.tc_settings
+        ready = _is_vertex_paint_ready(context)
+
+        if not ready:
+            layout.label(text="Switch to Vertex Paint mode", icon='INFO')
+
+        controls = layout.column(align=True)
+        controls.enabled = ready
+
+        row = controls.row(align=True)
+        red = row.operator("tilecutter.set_vertex_paint_color", text="", icon='COLORSET_01_VEC')
+        red.color_name = 'RED'
+        green = row.operator("tilecutter.set_vertex_paint_color", text="", icon='COLORSET_03_VEC')
+        green.color_name = 'GREEN'
+        blue = row.operator("tilecutter.set_vertex_paint_color", text="", icon='COLORSET_04_VEC')
+        blue.color_name = 'BLUE'
+
+        custom_row = controls.row(align=True)
+        custom_row.prop(s, "vp_custom_color", text="")
+        custom = custom_row.operator("tilecutter.set_vertex_paint_color", text="Custom", icon='EYEDROPPER')
+        custom.color_name = 'CUSTOM'
+
+        col = controls.column(align=True)
+        col.prop(s, "vp_brush_size")
+        col.prop(s, "vp_brush_hardness")
+        col.prop(s, "vp_brush_strength")
+        col.operator("tilecutter.sync_vertex_paint_brush", icon='BRUSH_DATA')
+
+        fill_row = controls.row(align=True)
+        selected = fill_row.operator("tilecutter.fill_vertex_paint_color", text="Fill Selected", icon='RESTRICT_SELECT_OFF')
+        selected.selected_only = True
+        obj = fill_row.operator("tilecutter.fill_vertex_paint_color", text="Fill Object", icon='SHADING_SOLID')
+        obj.selected_only = False
 
 # Registration
 classes = (
@@ -1980,10 +2271,14 @@ classes = (
     TC_OT_ApplyCylinder,
     TC_OT_SelectUVWGizmo,
     TC_OT_ApplyUVWMap,
+    TC_OT_SetVertexPaintColor,
+    TC_OT_SyncVertexPaintBrush,
+    TC_OT_FillVertexPaintColor,
     TC_PT_Main,
     TC_PT_TileGrid,
     TC_PT_CylinderProjection,
     TC_PT_UVWMapProjection,
+    TC_PT_VertexPaintTools,
 )
 
 
