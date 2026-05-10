@@ -2113,36 +2113,48 @@ class TC_OT_FillVertexPaintColor(Operator):
         color = _current_vertex_paint_color(context)
         mesh = obj.data
 
-        loop_indices = set()
+        selected_verts = set()
+        selected_loops = set()
         if self.selected_only:
             selected_verts = {v.index for v in mesh.vertices if v.select}
             selected_polys = [p for p in mesh.polygons if p.select]
             for poly in selected_polys:
-                loop_indices.update(poly.loop_indices)
+                selected_loops.update(poly.loop_indices)
+                selected_verts.update(poly.vertices)
             if selected_verts:
                 for poly in mesh.polygons:
                     for loop_index in poly.loop_indices:
                         if mesh.loops[loop_index].vertex_index in selected_verts:
-                            loop_indices.add(loop_index)
-            if not loop_indices:
+                            selected_loops.add(loop_index)
+            if not selected_verts and not selected_loops:
                 self.report({'WARNING'}, "No selected vertices or faces to fill")
                 if original_mode != 'OBJECT':
                     bpy.ops.object.mode_set(mode=original_mode)
                 return {'CANCELLED'}
-        else:
-            loop_indices.update(range(len(attr.data)))
 
-        for loop_index in loop_indices:
-            attr.data[loop_index].color = color
+        if attr.domain == 'CORNER':
+            indices = selected_loops if self.selected_only else range(len(attr.data))
+            for index in indices:
+                if 0 <= index < len(attr.data):
+                    attr.data[index].color = color
+        elif attr.domain == 'POINT':
+            indices = selected_verts if self.selected_only else range(len(mesh.vertices))
+            for index in indices:
+                if 0 <= index < len(attr.data):
+                    attr.data[index].color = color
+        else:
+            self.report({'WARNING'}, f"Unsupported color attribute domain: {attr.domain}")
+            if original_mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode=original_mode)
+            return {'CANCELLED'}
 
         mesh.update()
-        _apply_vertex_paint_brush(context, color[:3])
+        _apply_vertex_paint_brush(context, color)
         if original_mode != 'OBJECT':
             bpy.ops.object.mode_set(mode=original_mode)
 
         self.report({'INFO'}, "Vertex color filled")
         return {'FINISHED'}
-
 class TC_PT_Main(Panel):
     bl_label = "Tile Cutter"
     bl_idname = "TC_PT_MAIN"
