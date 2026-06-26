@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 6, 8),
+    "version": (0, 6, 9),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -1237,13 +1237,13 @@ class TC_Settings(PropertyGroup):
     )
     tile_size_x: FloatProperty(
         name="Tile Size X",
-        default=0.5, min=0.001, max=100.0,
+        default=1.0, min=0.001, max=100.0,
         unit='LENGTH',
         update=_sync_proj_box,
     )
     tile_size_y: FloatProperty(
         name="Tile Size Y",
-        default=0.25, min=0.001, max=100.0,
+        default=1.0, min=0.001, max=100.0,
         unit='LENGTH',
         update=_sync_proj_box,
     )
@@ -2084,6 +2084,46 @@ class TC_OT_SyncVertexPaintBrush(Operator):
         return {'FINISHED'}
 
 
+
+class TC_OT_EnterVertexPaintMode(Operator):
+    bl_idname = "tilecutter.enter_vertex_paint_mode"
+    bl_label = "Enter Vertex Paint"
+    bl_description = "Switch the active mesh to Vertex Paint mode"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = _active_mesh_object(context)
+        return obj is not None and obj.mode != 'VERTEX_PAINT'
+
+    def execute(self, context):
+        obj = _active_mesh_object(context)
+        if obj is None:
+            self.report({'WARNING'}, "Select a mesh object first")
+            return {'CANCELLED'}
+        if obj.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        _ensure_vertex_color_attribute(obj)
+        bpy.ops.object.mode_set(mode='VERTEX_PAINT')
+        self.report({'INFO'}, "Vertex Paint mode enabled")
+        return {'FINISHED'}
+
+
+class TC_OT_ExitVertexPaintMode(Operator):
+    bl_idname = "tilecutter.exit_vertex_paint_mode"
+    bl_label = "Object Mode"
+    bl_description = "Switch the active mesh back to Object Mode"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _is_vertex_paint_ready(context)
+
+    def execute(self, context):
+        bpy.ops.object.mode_set(mode='OBJECT')
+        self.report({'INFO'}, "Object Mode enabled")
+        return {'FINISHED'}
+
 class TC_OT_FillVertexPaintColor(Operator):
     bl_idname = "tilecutter.fill_vertex_paint_color"
     bl_label = "Fill Vertex Color"
@@ -2185,11 +2225,6 @@ class TC_PT_TileGrid(Panel):
 
         layout.prop(s, "target_object", icon='MESH_DATA')
         layout.prop(s, "reference_tile", icon='UV')
-
-        layout.separator()
-        col = layout.column(align=True)
-        col.prop(s, "tile_size_x")
-        col.prop(s, "tile_size_y")
 
         layout.prop(s, "duplicate_before_apply")
 
@@ -2297,8 +2332,12 @@ class TC_PT_VertexPaintTools(Panel):
         s = context.scene.tc_settings
         ready = _is_vertex_paint_ready(context)
 
-        if not ready:
+        mode_row = layout.row(align=True)
+        if ready:
+            mode_row.operator("tilecutter.exit_vertex_paint_mode", text="Object Mode", icon='OBJECT_DATA')
+        else:
             layout.label(text="Switch to Vertex Paint mode", icon='INFO')
+            mode_row.operator("tilecutter.enter_vertex_paint_mode", text="Enter Vertex Paint", icon='VPAINT_HLT')
 
         controls = layout.column(align=True)
         controls.enabled = ready
@@ -2345,6 +2384,8 @@ classes = (
     TC_OT_ApplyUVWMap,
     TC_OT_SetVertexPaintColor,
     TC_OT_SyncVertexPaintBrush,
+    TC_OT_EnterVertexPaintMode,
+    TC_OT_ExitVertexPaintMode,
     TC_OT_FillVertexPaintColor,
     TC_PT_Main,
     TC_PT_TileGrid,

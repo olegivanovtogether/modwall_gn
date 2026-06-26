@@ -6,7 +6,7 @@ Blender addon for a focused mobile-game asset workflow: tile-based UV projection
 
 Alpha version for a narrow production task. The addon is actively tested on flat, lying reference tile planes. Square tiles are the safest option; rectangular tiles are supported, but should be checked visually after projection.
 
-Current version: `0.6.8`
+Current version: `0.6.9`
 
 ## What Works Now
 
