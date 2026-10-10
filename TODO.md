@@ -22,6 +22,9 @@
 
 ---
 
+### Cylinder Projection: кутові розрізи і кришки
+Реалізовано в коді: різання по висоті (`_slice_cylinder_height_bands`), кутові розрізи по `Tiles Around` площинами (`_slice_cylinder_around_sectors`), режим `Stretch Around` без розрізів, кришки з `Project Caps` (`_slice_cylinder_caps_grid`). Лишається візуальна перевірка на циліндрах, де `Tiles Around` не ділиться на кількість сторін (див. Open).
+
 ### Vertex Paint Tools
 Панель Vertex Paint: вхід/вихід з режиму, кольори R/G/B/White/Black/Custom, параметри пензля, Fill Selected / Fill Object (point і face-corner домени).
 
@@ -31,11 +34,17 @@
 
 > Актуальні тікети: https://github.com/olegivanovtogether/modwall_gn/issues
 
-### UVW Cylinder caps
-UVW Cylinder проєктує лише бічну поверхню, потрібна проєкція кришок (caps).
+### UVW Cylinder caps (#1)
+UVW Cylinder проєктує лише бічну поверхню: грані з нормаллю вздовж осі отримують UV за кутом, без окремої планарної проєкції кришок.
 
-### Texel Density
-Texel density ще не повністю вирівняний. Треба окремо перевірити й допрацювати відповідність масштабу текстури між wall/box і cylinder projection.
+### Texel Density (#2)
+Texel density ще не вирівняний між режимами. Треба перевірити відповідність масштабу текстури між wall/box і cylinder projection на сцені.
 
-### Cylinder Angular Sections
-Розібратися з формулами січень по окружності: скільки існуючих ребер/сторін циліндра припадає на один tile, коли `Tiles Around` не ділиться рівно на кількість сторін, і як правильно додавати angular cuts без перекосів UV.
+### Cylinder: візуальна перевірка кутових розрізів (#3)
+Код є, але не підтверджено на практиці: коли `Tiles Around` не ділиться рівно на кількість сторін циліндра, перевірити, що UV не перекошені.
+
+### Прямокутні тайли (#4)
+Підтримуються, але квадратні лишаються безпечним варіантом. Перевірити у всіх режимах.
+
+### Застарілий тест
+`test_tile_cutter.py` посилається на неіснуючу властивість `rotation` і покриває лише Tile Grid. Оновити або видалити.

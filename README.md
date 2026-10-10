@@ -72,6 +72,7 @@ Helper panel for painting vertex colors on the active mesh without leaving the T
 
 - UVW Cylinder currently projects the side wrap only. Cap projection for UVW Cylinder still needs to be added.
 - Texel density across different projection modes still needs manual checking in some scenes.
+- Cylinder Projection angular cuts when `Tiles Around` does not divide the side count evenly still need visual verification.
 - UVW Map Projection does not create new geometry cuts, so visible texture boundaries depend on the existing mesh and the material's repeat behavior.
 - Rectangular tiles are supported, but square tiles remain the recommended production-safe path.
 
