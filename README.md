@@ -17,6 +17,8 @@ Current version: `0.6.9`
 - Cylinder Projection supports height cuts, angular cuts, optional Stretch Around behavior, cap projection, seams, and a viewport Cylinder Control.
 - UVW Map Projection adds no-cut UV projection modes for Box, Planar, and Cylinder.
 - UVW Box and Planar now use no-clamp UV tiling, so large faces repeat the reference tile instead of stretching one tile over the whole face.
+- Vertex Paint Tools panel: enter/exit Vertex Paint mode, R/G/B/White/Black/Custom brush colors, brush size/hardness/strength/alpha, and Fill Selected / Fill Object for vertex colors (point and face-corner color attribute domains).
+- Default tile size is `1x1`.
 
 ## Modes
 
@@ -57,6 +59,15 @@ Workflow:
 9. Keep `Copy Material From Reference` enabled if the result should receive the reference material.
 10. Click `Apply UVW Map`.
 
+### Vertex Paint Tools
+
+Helper panel for painting vertex colors on the active mesh without leaving the Tile Cutter sidebar.
+
+1. Select a mesh and click `Enter Vertex Paint` (`Object Mode` returns to Object Mode).
+2. Pick a color: `R`, `G`, `B`, `White`, `Black`, or `Custom` with the color swatch.
+3. Set brush `Size`, `Hardness`, `Strength`, `Alpha` and click `Apply Brush Settings`.
+4. Use `Fill Selected` (selected vertices/faces) or `Fill Object` (whole mesh) to fill the active color.
+
 ## Known Limitations / TODO
 
 - UVW Cylinder currently projects the side wrap only. Cap projection for UVW Cylinder still needs to be added.
@@ -66,12 +77,20 @@ Workflow:
 
 ## Installation
 
+The addon targets Blender 4.5+. The installed folder name is `modwall_gn`.
+
 1. Remove the old `modwall_gn` addon folder from Blender's addon directory if needed.
 2. Install the zip through Blender Preferences > Add-ons > Install.
 3. Enable `Simple Tile Cutter`.
 4. If Blender keeps old code in memory, use `F3 > Reload Scripts` or restart Blender.
 
+## Tickets / Roadmap
+
+Work is tracked on GitHub: [Issues](https://github.com/olegivanovtogether/modwall_gn/issues) and the project board linked from the repository. Open items are also summarised in `TODO.md`.
+
 ## Development Notes
+
+- Branches: `develop` is the working branch, `master` holds released states.
 
 - Do not change Tile Grid or Cylinder Projection when working on UVW Map Projection unless the task explicitly requires it.
 - Tile Grid and Cylinder Projection are working production modes and should be treated as reference behavior.

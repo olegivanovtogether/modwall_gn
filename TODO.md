@@ -22,7 +22,17 @@
 
 ---
 
+### Vertex Paint Tools
+Панель Vertex Paint: вхід/вихід з режиму, кольори R/G/B/White/Black/Custom, параметри пензля, Fill Selected / Fill Object (point і face-corner домени).
+
+---
+
 ## Open
+
+> Актуальні тікети: https://github.com/olegivanovtogether/modwall_gn/issues
+
+### UVW Cylinder caps
+UVW Cylinder проєктує лише бічну поверхню, потрібна проєкція кришок (caps).
 
 ### Texel Density
 Texel density ще не повністю вирівняний. Треба окремо перевірити й допрацювати відповідність масштабу текстури між wall/box і cylinder projection.
