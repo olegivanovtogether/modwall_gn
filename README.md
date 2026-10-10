@@ -2,7 +2,7 @@
 
 Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, reference-tile material transfer and vertex color painting helpers.
 
-- Version: `0.6.10` (alpha)
+- Version: `0.6.11` (alpha)
 - Blender: 4.5.0+
 - Location: `View3D > Sidebar > Tile Cutter`
 - Category: Mesh
@@ -34,8 +34,21 @@ Options:
 - `Target Wall`, `Reference Tile`
 - `Duplicate Before Apply` (default on): work on a copy.
 - `Reset Proj Box`
+- `Priority Axis` (default on) with three priority layers, see below.
 - `Mark Seams`: seams on tile borders, sharp corners and boundary edges. `Corner Angle` sets the sharpness threshold.
 - `Dissolve non-seamed edges`: removes edges without a seam. Only active when `Mark Seams` is on.
+
+#### Priority layers (Tile Grid)
+
+Faces whose normal sits near 45 degrees between two Projection Box axes used to flip between axes face by face. The priority layers make the choice deterministic. Each face goes to the first layer that matches:
+
+1. **Layer 1**: axis `X | Y | Z` (default `Z`), angle `From / To` (default 0 / 50 degrees) between the face normal and the axis, sign ignored, boundary included. Faces in range always project along this axis.
+2. **Layer 2** (own checkbox, default on): one of the two remaining axes (default `X`), own `From / To` (0 / 50). Applies only to faces not caught by layer 1.
+3. **Layer 3** (own checkbox, default on): the last remaining axis. It takes every face not caught by layers 1 and 2.
+
+Each layer has **Flip Back Faces**: the faces of that layer that look away from the axis are turned over (U mirrored), like gluing the paper on its other side. Off = straight-through projection. Defaults: layer 1 off, layers 2 and 3 on.
+
+Layer 2 and 3 depend on the parent `Priority Axis` checkbox. With any of them off, faces near 45 degrees may project chaotically (the panel shows a warning). The Projection Box preview follows these settings, so the pattern direction on the preview cube changes when you toggle Flip or change axes.
 
 ### Cylinder Projection
 

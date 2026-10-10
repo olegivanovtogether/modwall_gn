@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 6, 10),
+    "version": (0, 6, 11),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -39,18 +39,119 @@ from .bmesh_baker import get_tile_bounds, slice_mesh_with_grid
 # box-face it is most parallel to, then project vertices onto the two remaining
 # axes.  Rotation of the box rotates the axes → projection rotates with it.
 
+_AXIS_ORDER = ('X', 'Y', 'Z')
+
+
+def _resolve_priority_axes(s):
+    """(layer1, layer2, layer3) axis names; the three are always distinct."""
+    a1 = s.priority_axis if s.priority_axis in _AXIS_ORDER else 'Z'
+    a2 = s.secondary_axis
+    if a2 not in _AXIS_ORDER or a2 == a1:
+        a2 = next(a for a in _AXIS_ORDER if a != a1)
+    a3 = next(a for a in _AXIS_ORDER if a not in (a1, a2))
+    return a1, a2, a3
+
+
+def _angle_range_tenths(a_from, a_to):
+    """Slider degrees -> inclusive integer range in tenths of a degree.
+    Blender stores the sliders as float32 (0.1 -> 0.10000000149), so compare
+    in integers; clamp to 0..90 and swap if From > To."""
+    lo = max(0, min(900, round(a_from * 10.0)))
+    hi = max(0, min(900, round(a_to * 10.0)))
+    return (lo, hi) if lo <= hi else (hi, lo)
+
+
+def _uv_axes_for(major, fn, flip, ax_x, ax_y, ax_z, eps=0.0):
+    """U/V projection axes for a face projected along box axis `major`.
+    flip=True turns the face over (U mirrored) when its normal looks to the
+    side that ordinary wall faces of that axis already flip (X: -X, Y: +Y);
+    for Z no such rule existed, so flip mirrors U on down-facing faces."""
+    if major == 'Y':
+        # box XZ plane -> U along ax_x, V along ax_z
+        ua = -ax_x if (flip and fn.dot(ax_y) > eps) else ax_x
+        return ua, ax_z
+    if major == 'Z':
+        # box XY plane -> U along ax_x, V along ax_y
+        ua = -ax_x if (flip and fn.dot(ax_z) < -eps) else ax_x
+        return ua, ax_y
+    # box YZ plane -> U along ax_y, V along ax_z
+    ua = -ax_y if (flip and fn.dot(ax_x) < -eps) else ax_y
+    return ua, ax_z
+
+
+def _priority_layers(s):
+    """Settings -> `layers` dict for _apply_tile_uvs / preview (None = legacy)."""
+    if not s.use_priority_axis:
+        return None
+    return {
+        'axes': _resolve_priority_axes(s),
+        'range1': _angle_range_tenths(s.priority_angle_from, s.priority_angle_to),
+        'range2': _angle_range_tenths(s.secondary_angle_from, s.secondary_angle_to),
+        'use2': s.use_secondary_axis,
+        'use3': s.use_remainder_axis,
+        'flip1': s.priority_flip_back,
+        'flip2': s.secondary_flip_back,
+        'flip3': s.remainder_flip_back,
+    }
+
+
+def _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z):
+    """(major, flip, eps) for a face normal `fn` (see _apply_tile_uvs)."""
+    axis_vec = {'X': ax_x, 'Y': ax_y, 'Z': ax_z}
+
+    def angle_tenths(fn_unit, axis):
+        cos_a = min(1.0, abs(fn_unit.dot(axis_vec[axis])))
+        return round(math.degrees(math.acos(cos_a)) * 10.0)
+
+    if layers is not None and fn.length > 1e-6:
+        fn_u = fn.normalized()
+        a1, a2, a3 = layers['axes']
+        lo, hi = layers['range1']
+        if lo <= angle_tenths(fn_u, a1) <= hi:
+            return a1, layers['flip1'], 1e-4
+        if layers['use2']:
+            lo, hi = layers['range2']
+            if lo <= angle_tenths(fn_u, a2) <= hi:
+                return a2, layers['flip2'], 1e-4
+            if layers['use3']:
+                return a3, layers['flip3'], 1e-4
+
+    # Legacy rule: which box face is this mesh face most parallel to?
+    dot_x = abs(fn.dot(ax_x))
+    dot_y = abs(fn.dot(ax_y))
+    dot_z = abs(fn.dot(ax_z))
+    if dot_y >= dot_x and dot_y >= dot_z:
+        major = 'Y'
+    elif dot_z >= dot_x:
+        major = 'Z'
+    else:
+        major = 'X'
+    return major, major != 'Z', 0.0   # legacy: X/Y flip, Z never
+
+
 def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
                     box_origin, ax_x, ax_y, ax_z,
-                    priority_axis=None, angle_from=0.0, angle_to=50.0):
-    """priority_axis: None, or 'X'/'Y'/'Z'. Faces whose normal makes an angle
-    in [angle_from, angle_to] (degrees, sign ignored, rounded to 0.1) with that
-    box axis are always projected along it; the boundary is inclusive."""
+                    layers=None):
+    """layers=None: legacy rule (axis with the largest normal component,
+    ties Y > Z > X; X/Y faces flip as before, Z never flips).
+
+    layers (dict) enables the priority layers:
+      axes     (a1, a2, a3)  distinct axis names
+      range1   (lo, hi)      tenths of a degree, inclusive, vs axis a1
+      range2   (lo, hi)      same for axis a2
+      use2     bool          layer 2 enabled; if False faces outside layer 1
+                             use the legacy rule (layer 3 is skipped too)
+      use3     bool          layer 3 enabled; if False faces outside layers
+                             1 and 2 use the legacy rule
+      flip1, flip2, flip3    bool, "Flip Back Faces" per layer
+    Angle = angle between the face normal and the axis, sign ignored. Order:
+    layer 1, then layer 2, then the remaining axis a3 (layer 3).
+    """
     uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
     tile_u = max(tile_u, 0.001)
     tile_v = max(tile_v, 0.001)
 
     stats = {'quads': 0, 'triangles': 0, 'ngons': 0}
-    prio_vec = {'X': ax_x, 'Y': ax_y, 'Z': ax_z}.get(priority_axis)
     bm.normal_update()
 
     for face in bm.faces:
@@ -60,41 +161,11 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
         else:        stats['ngons'] += 1
 
         fn = face.normal
-        dot_x = abs(fn.dot(ax_x))
-        dot_y = abs(fn.dot(ax_y))
-        dot_z = abs(fn.dot(ax_z))
+        major, flip, eps = _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z)
 
-        # Which box face is this mesh face most parallel to?
-        major = None
-        if prio_vec is not None:
-            cos_a = min(1.0, abs(fn.normalized().dot(prio_vec)))
-            # Compare in integer tenths of a degree: Blender stores the
-            # From/To sliders as float32 (0.1 -> 0.10000000149).
-            angle_t = round(math.degrees(math.acos(cos_a)) * 10.0)
-            if round(angle_from * 10.0) <= angle_t <= round(angle_to * 10.0):
-                major = priority_axis
-        if major is None:
-            if dot_y >= dot_x and dot_y >= dot_z:
-                major = 'Y'
-            elif dot_z >= dot_x:
-                major = 'Z'
-            else:
-                major = 'X'
+        ua, va = _uv_axes_for(major, fn, flip, ax_x, ax_y, ax_z, eps)
 
-        if major == 'Y':
-            # ≈ parallel to box XZ plane → project U along ax_x, V along ax_z
-            ua = -ax_x if fn.dot(ax_y) > 0 else ax_x
-            va = ax_z
-        elif major == 'Z':
-            # ≈ parallel to box XY plane → U along ax_x, V along ax_y
-            ua = ax_x
-            va = ax_y
-        else:
-            # ≈ parallel to box YZ plane → U along ax_y, V along ax_z
-            ua = -ax_y if fn.dot(ax_x) < 0 else ax_y
-            va = ax_z
-
-        # Face center → tile cell (keeps all verts of one face in same cell).
+        # Face center -> tile cell (keeps all verts of one face in same cell).
         # Projection Box origin is the center of the preview tile, so cell
         # boundaries live at half-tile offsets from the origin.
         c = face.calc_center_median() - box_origin
@@ -1097,20 +1168,24 @@ def _create_tile_preview(context, s):
             b_min[1] + v * (b_max[1] - b_min[1]),
         )
 
-    def preview_uv(mode, co):
-        x = co.x + 0.5
-        y = co.y + 0.5
-        z = co.z + 0.5
+    layers = _priority_layers(s)
+    box_axes = (Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)), Vector((0.0, 0.0, 1.0)))
+    face_normals = {
+        "bottom": Vector((0.0, 0.0, -1.0)),
+        "top":    Vector((0.0, 0.0, 1.0)),
+        "front":  Vector((0.0, -1.0, 0.0)),
+        "right":  Vector((1.0, 0.0, 0.0)),
+        "back":   Vector((0.0, 1.0, 0.0)),
+        "left":   Vector((-1.0, 0.0, 0.0)),
+    }
 
-        if mode == "back":
-            return remap_uv(1.0 - x, z)
-        if mode == "right":
-            return remap_uv(y, z)
-        if mode == "left":
-            return remap_uv(1.0 - y, z)
-        if mode in {"top", "bottom"}:
-            return remap_uv(x, y)
-        return remap_uv(x, z)
+    def preview_uv(mode, co):
+        # Same decision as Apply: which axis/layer owns this face and whether
+        # it is turned over, so toggles are visible on the preview.
+        fn = face_normals[mode]
+        major, flip, eps = _choose_axis_and_flip(fn, layers, *box_axes)
+        ua, va = _uv_axes_for(major, fn, flip, *box_axes, eps)
+        return remap_uv(co.dot(ua) + 0.5, co.dot(va) + 0.5)
 
     for poly, mode in zip(mesh.polygons, face_modes):
         for loop_index in poly.loop_indices:
@@ -1210,6 +1285,20 @@ def _poll_mesh(self, obj):
     return obj.type == 'MESH'
 
 
+def _refresh_tile_preview(self, context):
+    s = context.scene.tc_settings
+    if s.proj_box is not None and s.reference_tile is not None:
+        _create_tile_preview(context, s)
+
+
+def _sync_priority_axes(self, context):
+    """Layer 2 axis must differ from the layer 1 axis. Keep it if still valid,
+    otherwise take the first remaining axis (X -> Y -> Z)."""
+    if self.secondary_axis == self.priority_axis:
+        self.secondary_axis = next(a for a in _AXIS_ORDER if a != self.priority_axis)
+    _refresh_tile_preview(self, context)
+
+
 def _sync_seam_options(self, context):
     if not self.mark_seams:
         self.dissolve_non_seamed_edges = False
@@ -1291,28 +1380,81 @@ class TC_Settings(PropertyGroup):
     )
     use_priority_axis: BoolProperty(
         name="Priority Axis",
-        description="Faces whose normal is within the angle range of the priority axis always project along that axis (avoids chaos near 45 degrees)",
+        description="Faces whose normal is within the angle range of a priority axis always project along that axis (avoids chaos near 45 degrees)",
         default=True,
+        update=_refresh_tile_preview,
     )
     priority_axis: EnumProperty(
         name="Axis",
-        description="Projection Box axis that wins inside the angle range",
+        description="Layer 1: Projection Box axis that wins inside the angle range",
         items=[
             ('X', "X", "Projection Box X axis"),
             ('Y', "Y", "Projection Box Y axis"),
             ('Z', "Z", "Projection Box Z axis (ceiling / floor)"),
         ],
         default='Z',
+        update=_sync_priority_axes,
     )
     priority_angle_from: FloatProperty(
         name="From",
-        description="Minimum angle between the face normal and the priority axis (degrees)",
+        description="Minimum angle between the face normal and the layer 1 axis (degrees)",
         default=0.0, min=0.0, max=90.0,
     )
     priority_angle_to: FloatProperty(
         name="To",
-        description="Maximum angle between the face normal and the priority axis (degrees); the boundary itself is included",
+        description="Maximum angle between the face normal and the layer 1 axis (degrees); the boundary itself is included",
         default=50.0, min=0.0, max=90.0,
+    )
+    priority_flip_back: BoolProperty(
+        name="Flip Back Faces",
+        description="Turn over (mirror U of) the faces of this layer that look away from the axis, like gluing the paper on the other side. Off = straight-through projection",
+        default=False,
+        update=_refresh_tile_preview,
+    )
+    use_secondary_axis: BoolProperty(
+        name="Layer 2",
+        description="Second priority layer: among faces not caught by layer 1, faces within the angle range of the second axis project along it",
+        default=True,
+        update=_refresh_tile_preview,
+    )
+    secondary_axis: EnumProperty(
+        name="Axis",
+        description="Layer 2: one of the two axes left after layer 1",
+        items=[
+            ('X', "X", "Projection Box X axis"),
+            ('Y', "Y", "Projection Box Y axis"),
+            ('Z', "Z", "Projection Box Z axis"),
+        ],
+        default='X',
+        update=_refresh_tile_preview,
+    )
+    secondary_angle_from: FloatProperty(
+        name="From",
+        description="Minimum angle between the face normal and the layer 2 axis (degrees)",
+        default=0.0, min=0.0, max=90.0,
+    )
+    secondary_angle_to: FloatProperty(
+        name="To",
+        description="Maximum angle between the face normal and the layer 2 axis (degrees); the boundary itself is included",
+        default=50.0, min=0.0, max=90.0,
+    )
+    secondary_flip_back: BoolProperty(
+        name="Flip Back Faces",
+        description="Turn over (mirror U of) the faces of this layer that look away from the axis, like gluing the paper on the other side. Off = straight-through projection",
+        default=True,
+        update=_refresh_tile_preview,
+    )
+    use_remainder_axis: BoolProperty(
+        name="Layer 3",
+        description="Third priority layer: faces not caught by layers 1 and 2 project along the remaining axis. Off = nearest-axis rule (may be chaotic near 45 degrees)",
+        default=True,
+        update=_refresh_tile_preview,
+    )
+    remainder_flip_back: BoolProperty(
+        name="Flip Back Faces",
+        description="Turn over (mirror U of) the remaining faces that look away from the remaining axis, like gluing the paper on the other side. Off = straight-through projection",
+        default=True,
+        update=_refresh_tile_preview,
     )
     mark_seams: BoolProperty(
         name="Mark Seams",
@@ -1595,13 +1737,13 @@ class TC_OT_Apply(Operator):
         )
         bmesh.ops.remove_doubles(bm, verts=bm.verts, dist=0.0001)
 
+        layers = _priority_layers(s)
+
         uv_stats = _apply_tile_uvs(
             bm, b_min, b_max,
             tile_u, tile_v,
             box_origin, ax_x, ax_y, ax_z,
-            priority_axis=s.priority_axis if s.use_priority_axis else None,
-            angle_from=s.priority_angle_from,
-            angle_to=max(s.priority_angle_to, s.priority_angle_from),
+            layers=layers,
         )
 
         if s.mark_seams:
@@ -2256,7 +2398,7 @@ class TC_PT_Main(Panel):
         layout = self.layout
 
         info = layout.column(align=True)
-        info.label(text="v0.6.10-test")
+        info.label(text="v0.6.11")
         info.label(text="Alpha mobile-game tiling tool.", icon='INFO')
         info.label(text="Use a flat, lying reference tile plane.")
         info.label(text="Rectangular tiles work; square tiles are safer.")
@@ -2287,12 +2429,51 @@ class TC_PT_TileGrid(Panel):
 
         layout.separator()
         layout.prop(s, "use_priority_axis")
-        prio_col = layout.column(align=True)
-        prio_col.enabled = s.use_priority_axis
-        prio_col.prop(s, "priority_axis")
-        prio_row = prio_col.row(align=True)
-        prio_row.prop(s, "priority_angle_from")
-        prio_row.prop(s, "priority_angle_to")
+        if not s.use_priority_axis:
+            layout.label(text="Off: faces near 45 deg may project chaotically",
+                         icon='ERROR')
+        a1, a2, a3 = _resolve_priority_axes(s)
+        on1 = s.use_priority_axis
+        on2 = on1 and s.use_secondary_axis
+        on3 = on2 and s.use_remainder_axis
+
+        col = layout.column()
+        col.enabled = on1
+
+        box1 = col.box()
+        box1.label(text=f"Layer 1: axis {a1}")
+        box1.prop(s, "priority_axis", expand=True)
+        row = box1.row(align=True)
+        row.prop(s, "priority_angle_from")
+        row.prop(s, "priority_angle_to")
+        box1.prop(s, "priority_flip_back")
+
+        box2 = col.box()
+        box2.prop(s, "use_secondary_axis", text=f"Layer 2: axis {a2}")
+        if on1 and not s.use_secondary_axis:
+            box2.label(text="Off: faces near 45 deg may project chaotically",
+                       icon='ERROR')
+        col2 = box2.column(align=True)
+        col2.enabled = on2
+        row = col2.row(align=True)
+        for ax in _AXIS_ORDER:
+            if ax != a1:
+                row.prop_enum(s, "secondary_axis", ax)
+        row = col2.row(align=True)
+        row.prop(s, "secondary_angle_from")
+        row.prop(s, "secondary_angle_to")
+        col2.prop(s, "secondary_flip_back")
+
+        box3 = col.box()
+        row3 = box3.row()
+        row3.enabled = on2
+        row3.prop(s, "use_remainder_axis", text=f"Layer 3: remaining axis {a3}")
+        if on2 and not s.use_remainder_axis:
+            box3.label(text="Off: nearest-axis rule, may be chaotic near 45 deg",
+                       icon='ERROR')
+        col3 = box3.column()
+        col3.enabled = on3
+        col3.prop(s, "remainder_flip_back")
 
         layout.separator()
         layout.prop(s, "mark_seams")
