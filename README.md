@@ -2,7 +2,7 @@
 
 Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, reference-tile material transfer and vertex color painting helpers.
 
-- Version: `0.6.9` (alpha)
+- Version: `0.6.10` (alpha)
 - Blender: 4.5.0+
 - Location: `View3D > Sidebar > Tile Cutter`
 - Category: Mesh

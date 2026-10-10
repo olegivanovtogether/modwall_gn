@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 6, 9),
+    "version": (0, 6, 10),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -40,12 +40,18 @@ from .bmesh_baker import get_tile_bounds, slice_mesh_with_grid
 # axes.  Rotation of the box rotates the axes → projection rotates with it.
 
 def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
-                    box_origin, ax_x, ax_y, ax_z):
+                    box_origin, ax_x, ax_y, ax_z,
+                    priority_axis=None, angle_from=0.0, angle_to=50.0):
+    """priority_axis: None, or 'X'/'Y'/'Z'. Faces whose normal makes an angle
+    in [angle_from, angle_to] (degrees, sign ignored, rounded to 0.1) with that
+    box axis are always projected along it; the boundary is inclusive."""
     uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
     tile_u = max(tile_u, 0.001)
     tile_v = max(tile_v, 0.001)
 
     stats = {'quads': 0, 'triangles': 0, 'ngons': 0}
+    prio_vec = {'X': ax_x, 'Y': ax_y, 'Z': ax_z}.get(priority_axis)
+    bm.normal_update()
 
     for face in bm.faces:
         n = len(face.verts)
@@ -59,11 +65,27 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
         dot_z = abs(fn.dot(ax_z))
 
         # Which box face is this mesh face most parallel to?
-        if dot_y >= dot_x and dot_y >= dot_z:
+        major = None
+        if prio_vec is not None:
+            cos_a = min(1.0, abs(fn.normalized().dot(prio_vec)))
+            # Compare in integer tenths of a degree: Blender stores the
+            # From/To sliders as float32 (0.1 -> 0.10000000149).
+            angle_t = round(math.degrees(math.acos(cos_a)) * 10.0)
+            if round(angle_from * 10.0) <= angle_t <= round(angle_to * 10.0):
+                major = priority_axis
+        if major is None:
+            if dot_y >= dot_x and dot_y >= dot_z:
+                major = 'Y'
+            elif dot_z >= dot_x:
+                major = 'Z'
+            else:
+                major = 'X'
+
+        if major == 'Y':
             # ≈ parallel to box XZ plane → project U along ax_x, V along ax_z
             ua = -ax_x if fn.dot(ax_y) > 0 else ax_x
             va = ax_z
-        elif dot_z >= dot_x:
+        elif major == 'Z':
             # ≈ parallel to box XY plane → U along ax_x, V along ax_y
             ua = ax_x
             va = ax_y
@@ -1267,6 +1289,31 @@ class TC_Settings(PropertyGroup):
         description="Work on a copy; original mesh is left untouched",
         default=True,
     )
+    use_priority_axis: BoolProperty(
+        name="Priority Axis",
+        description="Faces whose normal is within the angle range of the priority axis always project along that axis (avoids chaos near 45 degrees)",
+        default=True,
+    )
+    priority_axis: EnumProperty(
+        name="Axis",
+        description="Projection Box axis that wins inside the angle range",
+        items=[
+            ('X', "X", "Projection Box X axis"),
+            ('Y', "Y", "Projection Box Y axis"),
+            ('Z', "Z", "Projection Box Z axis (ceiling / floor)"),
+        ],
+        default='Z',
+    )
+    priority_angle_from: FloatProperty(
+        name="From",
+        description="Minimum angle between the face normal and the priority axis (degrees)",
+        default=0.0, min=0.0, max=90.0,
+    )
+    priority_angle_to: FloatProperty(
+        name="To",
+        description="Maximum angle between the face normal and the priority axis (degrees); the boundary itself is included",
+        default=50.0, min=0.0, max=90.0,
+    )
     mark_seams: BoolProperty(
         name="Mark Seams",
         description="Mark seams on tile borders / sharp corners / boundary edges",
@@ -1552,6 +1599,9 @@ class TC_OT_Apply(Operator):
             bm, b_min, b_max,
             tile_u, tile_v,
             box_origin, ax_x, ax_y, ax_z,
+            priority_axis=s.priority_axis if s.use_priority_axis else None,
+            angle_from=s.priority_angle_from,
+            angle_to=max(s.priority_angle_to, s.priority_angle_from),
         )
 
         if s.mark_seams:
@@ -2206,6 +2256,7 @@ class TC_PT_Main(Panel):
         layout = self.layout
 
         info = layout.column(align=True)
+        info.label(text="v0.6.10-test")
         info.label(text="Alpha mobile-game tiling tool.", icon='INFO')
         info.label(text="Use a flat, lying reference tile plane.")
         info.label(text="Rectangular tiles work; square tiles are safer.")
@@ -2233,6 +2284,15 @@ class TC_PT_TileGrid(Panel):
             layout.label(text="Proj Box: move / scale / rotate it")
             layout.operator("tilecutter.reset_proj_box",
                             text="Reset Proj Box", icon='LOOP_BACK')
+
+        layout.separator()
+        layout.prop(s, "use_priority_axis")
+        prio_col = layout.column(align=True)
+        prio_col.enabled = s.use_priority_axis
+        prio_col.prop(s, "priority_axis")
+        prio_row = prio_col.row(align=True)
+        prio_row.prop(s, "priority_angle_from")
+        prio_row.prop(s, "priority_angle_to")
 
         layout.separator()
         layout.prop(s, "mark_seams")
