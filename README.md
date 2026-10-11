@@ -1,4 +1,4 @@
-# modwall_gn
+# ModwallGN
 
 *(formerly Simple Tile Cutter)*
 
@@ -6,7 +6,7 @@ Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV pro
 
 - Version: `0.7.0` (alpha)
 - Blender: 4.5.0+
-- Location: `View3D > Sidebar > modwall_gn`
+- Location: `View3D > Sidebar > ModwallGN`
 - Category: Mesh
 - Author: Oleh Strykitchenko
 
@@ -23,7 +23,7 @@ All plans, open work and bugs live on GitHub, not in this repository:
 
 ## Panels
 
-The sidebar tab `modwall_gn` has one panel with the add-on name and version on top, then a row of module tabs (they wrap onto a second row on a narrow panel): **Tile Grid**, **Cylinder**, **UVW Map**, **Vertex Paint**. The selected tab shows the controls of that module. The selected tab is UI state and is not saved with the file.
+The sidebar tab `ModwallGN` has one panel with the add-on name and version on top, then a bar of module tabs (one row; two rows of two when the panel is narrow): **Tile Grid**, **Cylinder**, **UVW Map**, **Vertex Paint**. The selected tab shows the controls of that module. The selected tab is UI state and is not saved with the file.
 
 ### Tile Grid (tab)
 
@@ -134,7 +134,7 @@ See the issue tracker for the current state of each item.
 
 1. Remove the old `modwall_gn` addon folder from Blender's addon directory if needed.
 2. Install the zip through Blender Preferences > Add-ons > Install, or copy the folder to `Blender\4.5\scripts\addons\modwall_gn`.
-3. Enable `Simple Tile Cutter`.
+3. Enable `ModwallGN (Simple Tile Cutter)`.
 4. If Blender keeps old code in memory, use `F3 > Reload Scripts` or restart Blender.
 
 ## Repository layout

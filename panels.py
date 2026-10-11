@@ -251,23 +251,50 @@ def _draw_vertex_paint(layout, context):
     obj.selected_only = False
 
 
+# Below this width (in UI units, scale removed) the four tab buttons would be
+# cut to unreadable stubs, so they are laid out as two rows of two.
+_TABS_ONE_ROW_MIN_WIDTH = 330
+
+
+def _tabs_fit_one_row(context):
+    region = getattr(context, "region", None)
+    width = getattr(region, "width", None)
+    if not width:
+        return True
+    scale = 1.0
+    try:
+        scale = context.preferences.system.ui_scale or 1.0
+    except Exception:
+        pass
+    return (width / scale) >= _TABS_ONE_ROW_MIN_WIDTH
+
+
 class TC_PT_Main(Panel):
-    bl_label = "modwall_gn (Simple Tile Cutter)"
+    bl_label = "ModwallGN"
     bl_idname = "TC_PT_MAIN"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'modwall_gn'
+    bl_category = 'ModwallGN'
+    bl_options = {'HIDE_HEADER'}
 
     def draw(self, context):
         layout = self.layout
         wm = context.window_manager
 
-        layout.label(text=f"v{_addon_version()}")
+        # Header: add-on name and version (like the tab bar of other add-ons).
+        header = layout.row(align=True)
+        header.label(text=f"ModwallGN  v{_addon_version()}", icon='MESH_GRID')
 
-        # Tab buttons; they wrap onto a second row when the panel is narrow.
-        flow = layout.grid_flow(row_major=True, columns=0, even_columns=True, align=True)
-        for ident, label, _desc in TABS:
-            flow.prop_enum(wm, "modwall_gn_tab", ident, text=label)
+        # Tab bar: one row of buttons filling the width; two rows when narrow.
+        if _tabs_fit_one_row(context):
+            bar = layout.row(align=True)
+            bar.scale_y = 1.2
+            bar.prop(wm, "modwall_gn_tab", expand=True)
+        else:
+            flow = layout.grid_flow(row_major=True, columns=2, even_columns=True, align=True)
+            flow.scale_y = 1.2
+            for ident, label, _desc in TABS:
+                flow.prop_enum(wm, "modwall_gn_tab", ident, text=label)
         layout.separator()
 
         tab = wm.modwall_gn_tab
