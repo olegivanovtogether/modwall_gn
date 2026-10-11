@@ -81,7 +81,10 @@ def register():
     if hasattr(bpy.types.Scene, "tc_settings"):
         del bpy.types.Scene.tc_settings
     for cls in classes:
-        existing = getattr(bpy.types, cls.__name__, None)
+        # Panels are exposed under their bl_idname, other classes by class name.
+        existing = getattr(bpy.types, getattr(cls, "bl_idname", "") or "", None)
+        if existing is None or existing is cls:
+            existing = getattr(bpy.types, cls.__name__, None)
         if existing is not None:
             try:
                 bpy.utils.unregister_class(existing)
@@ -90,8 +93,12 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.tc_settings = PointerProperty(type=props.TC_Settings)
     panels.register_tab_property()
-    if _tc_load_post not in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.append(_tc_load_post)
+    # Drop a handler left by an earlier copy of this module (reload without
+    # unregister), then add the current one.
+    for h in list(bpy.app.handlers.load_post):
+        if getattr(h, "__name__", "") == "_tc_load_post":
+            bpy.app.handlers.load_post.remove(h)
+    bpy.app.handlers.load_post.append(_tc_load_post)
     try:
         _sync_axis_memory()
     except Exception:
@@ -99,8 +106,9 @@ def register():
 
 
 def unregister():
-    if _tc_load_post in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_tc_load_post)
+    for h in list(bpy.app.handlers.load_post):
+        if getattr(h, "__name__", "") == "_tc_load_post":
+            bpy.app.handlers.load_post.remove(h)
     panels.unregister_tab_property()
     if hasattr(bpy.types.Scene, "tc_settings"):
         del bpy.types.Scene.tc_settings
