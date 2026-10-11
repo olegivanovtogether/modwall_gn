@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 6, 13),
+    "version": (0, 6, 14),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -20,7 +20,9 @@ from bpy.props import (
     PointerProperty,
     IntProperty,
     EnumProperty,
+    StringProperty,
 )
+from bpy.app.handlers import persistent
 from bpy.types import Panel, Operator, PropertyGroup
 
 from . import bmesh_baker
@@ -52,13 +54,23 @@ def _resolve_priority_axes(s):
     return a1, a2, a3
 
 
-def _flip_side_labels(axis):
-    """(default side, opposite side) button texts for an axis."""
-    if axis == 'Z':
-        return "Bottom (-Z)", "Top (+Z)"
-    if axis == 'X':
-        return "-X", "+X"
-    return "+Y", "-Y"
+_LAYER_ROLES = {
+    1: ("Top-Bottom", "Top", "Bottom"),
+    2: ("Front-Back", "Front", "Back"),
+    3: ("Left-Right", "Left", "Right"),
+}
+_DEFAULT_FLIP_SIGN = {'X': '-', 'Y': '+', 'Z': '-'}   # side flipped before
+
+
+def _flip_side_buttons(layer, axis):
+    """[(enum value, text), (enum value, text)] for the Flip side buttons of a
+    layer. The words belong to the layer role (1 top/bottom, 2 front/back,
+    3 left/right); the sign and letter come from the layer's current axis."""
+    _, plus_name, minus_name = _LAYER_ROLES[layer]
+    default_is_minus = _DEFAULT_FLIP_SIGN[axis] == '-'
+    minus = ('DEFAULT' if default_is_minus else 'OPPOSITE', f"{minus_name} (-{axis})")
+    plus = ('OPPOSITE' if default_is_minus else 'DEFAULT', f"{plus_name} (+{axis})")
+    return [minus, plus]
 
 
 def _angle_range_tenths(a_from, a_to):
@@ -1347,10 +1359,17 @@ def _refresh_tile_preview(self, context):
 
 
 def _sync_priority_axes(self, context):
-    """Layer 2 axis must differ from the layer 1 axis. Keep it if still valid,
-    otherwise take the first remaining axis (X -> Y -> Z)."""
-    if self.secondary_axis == self.priority_axis:
-        self.secondary_axis = next(a for a in _AXIS_ORDER if a != self.priority_axis)
+    """Layer 1 axis changed. If layer 2 already used that axis, the two layers
+    swap axes (layer 2 takes the axis layer 1 just left). Layer 3 always is
+    the remaining axis, so it follows automatically."""
+    new = self.priority_axis
+    old = self.priority_axis_prev
+    if self.secondary_axis == new:
+        if old in _AXIS_ORDER and old != new:
+            self.secondary_axis = old
+        else:
+            self.secondary_axis = next(a for a in _AXIS_ORDER if a != new)
+    self.priority_axis_prev = new
     _refresh_tile_preview(self, context)
 
 
@@ -1461,6 +1480,12 @@ class TC_Settings(PropertyGroup):
         ],
         default='Z',
         update=_sync_priority_axes,
+    )
+    priority_axis_prev: StringProperty(
+        name="Previous layer 1 axis",
+        description="Internal: remembers the layer 1 axis before the last change",
+        default='Z',
+        options={'HIDDEN'},
     )
     priority_angle_from: FloatProperty(
         name="From",
@@ -2515,7 +2540,7 @@ class TC_PT_Main(Panel):
         layout = self.layout
 
         info = layout.column(align=True)
-        info.label(text="v0.6.13")
+        info.label(text="v0.6.14")
         info.label(text="Alpha mobile-game tiling tool.", icon='INFO')
         info.label(text="Use a flat, lying reference tile plane.")
         info.label(text="Rectangular tiles work; square tiles are safer.")
@@ -2562,30 +2587,29 @@ class TC_PT_TileGrid(Panel):
 
         a1, a2, a3 = _resolve_priority_axes(s)
 
-        def side_row(box, prop, axis, enabled=True):
-            default_txt, opposite_txt = _flip_side_labels(axis)
+        def side_row(box, prop, layer, axis, enabled=True):
             col = box.column(align=True)
             col.enabled = enabled
             col.label(text="Flip side:")
             row = col.row(align=True)
-            row.prop_enum(s, prop, 'DEFAULT', text=default_txt)
-            row.prop_enum(s, prop, 'OPPOSITE', text=opposite_txt)
+            for value, text in _flip_side_buttons(layer, axis):
+                row.prop_enum(s, prop, value, text=text)
 
         # ── Layer 1 ──
         layout.separator(factor=1.5)
         box1 = layout.box()
-        box1.label(text=f"Layer 1  ·  axis {a1}")
+        box1.label(text=f"Layer 1  ·  Top-Bottom  ·  axis {a1}")
         box1.prop(s, "priority_axis", expand=True)
         row = box1.row(align=True)
         row.prop(s, "priority_angle_from")
         row.prop(s, "priority_angle_to")
         box1.prop(s, "priority_flip_back")
-        side_row(box1, "priority_flip_side", a1, s.priority_flip_back)
+        side_row(box1, "priority_flip_side", 1, a1, s.priority_flip_back)
 
         # ── Layer 2 ──
         layout.separator(factor=1.5)
         box2 = layout.box()
-        box2.prop(s, "use_secondary_axis", text=f"Layer 2  ·  axis {a2}")
+        box2.prop(s, "use_secondary_axis", text=f"Layer 2  ·  Front-Back  ·  axis {a2}")
         if not s.use_secondary_axis:
             box2.label(text="Off: faces near 45 deg may project chaotically",
                        icon='ERROR')
@@ -2599,7 +2623,7 @@ class TC_PT_TileGrid(Panel):
         row.prop(s, "secondary_angle_from")
         row.prop(s, "secondary_angle_to")
         col2.prop(s, "secondary_flip_back")
-        side_row(col2, "secondary_flip_side", a2, s.secondary_flip_back)
+        side_row(col2, "secondary_flip_side", 2, a2, s.secondary_flip_back)
 
         # ── Layer 3 ──
         layout.separator(factor=1.5)
@@ -2607,7 +2631,7 @@ class TC_PT_TileGrid(Panel):
         row3 = box3.row()
         row3.enabled = s.use_secondary_axis
         row3.prop(s, "use_remainder_axis",
-                  text=f"Layer 3  ·  remaining axis {a3}")
+                  text=f"Layer 3  ·  Left-Right  ·  axis {a3}")
         if not s.use_secondary_axis:
             box3.label(text="Needs Layer 2", icon='INFO')
         elif not s.use_remainder_axis:
@@ -2616,7 +2640,7 @@ class TC_PT_TileGrid(Panel):
         col3 = box3.column()
         col3.enabled = s.use_secondary_axis and s.use_remainder_axis
         col3.prop(s, "remainder_flip_back")
-        side_row(col3, "remainder_flip_side", a3, s.remainder_flip_back)
+        side_row(col3, "remainder_flip_side", 3, a3, s.remainder_flip_back)
 
 
 class TC_PT_TileGridApply(Panel):
@@ -2793,6 +2817,20 @@ classes = (
 )
 
 
+def _sync_axis_memory():
+    """Make `priority_axis_prev` match the current layer 1 axis in every scene
+    (it is not stored in older files, so it could be stale after loading)."""
+    for scene in bpy.data.scenes:
+        st = getattr(scene, "tc_settings", None)
+        if st is not None:
+            st.priority_axis_prev = st.priority_axis
+
+
+@persistent
+def _tc_load_post(_dummy=None):
+    _sync_axis_memory()
+
+
 def register():
     if hasattr(bpy.types.Scene, "tc_settings"):
         del bpy.types.Scene.tc_settings
@@ -2805,9 +2843,17 @@ def register():
                 pass
         bpy.utils.register_class(cls)
     bpy.types.Scene.tc_settings = PointerProperty(type=TC_Settings)
+    if _tc_load_post not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_tc_load_post)
+    try:
+        _sync_axis_memory()
+    except Exception:
+        pass
 
 
 def unregister():
+    if _tc_load_post in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_tc_load_post)
     if hasattr(bpy.types.Scene, "tc_settings"):
         del bpy.types.Scene.tc_settings
     for cls in reversed(classes):
