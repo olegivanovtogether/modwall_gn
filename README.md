@@ -2,7 +2,7 @@
 
 Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, reference-tile material transfer and vertex color painting helpers.
 
-- Version: `0.6.12` (alpha)
+- Version: `0.6.13` (alpha)
 - Blender: 4.5.0+
 - Location: `View3D > Sidebar > Tile Cutter`
 - Category: Mesh
@@ -56,7 +56,9 @@ Faces whose normal sits near 45 degrees between two Projection Box axes used to 
 
 Each layer has **Flip Back Faces**: the faces of that layer that look away from the axis are turned over (U mirrored), like gluing the paper on its other side. Off = straight-through projection. Defaults: layer 1 off, layers 2 and 3 on.
 
-Each layer is its own sub-panel with its enable checkbox in the header. Layer 2 and 3 depend on the parent `Priority Axis` checkbox. With any of them off, faces near 45 degrees may project chaotically (the panel shows a warning). The Projection Box preview follows these settings, so the pattern direction on the preview cube changes when you toggle Flip or change axes.
+Each layer also has **Flip side**: which side of the layer's axis is turned over. Default side is the one used before (Z: bottom, X: -X, Y: +Y); the opposite side flips the other one (Z: top, X: +X, Y: -Y). So you choose whether the floor or the ceiling is flipped.
+
+Each layer is its own box in the panel with its enable checkbox next to the title. Layer 2 and 3 depend on the parent `Priority Axis` checkbox. With any of them off, faces near 45 degrees may project chaotically (the panel shows a warning). The Projection Box preview follows these settings, so the pattern direction on the preview cube changes when you toggle Flip or change axes.
 
 ### Cylinder Projection
 

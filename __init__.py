@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 6, 12),
+    "version": (0, 6, 13),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -52,6 +52,15 @@ def _resolve_priority_axes(s):
     return a1, a2, a3
 
 
+def _flip_side_labels(axis):
+    """(default side, opposite side) button texts for an axis."""
+    if axis == 'Z':
+        return "Bottom (-Z)", "Top (+Z)"
+    if axis == 'X':
+        return "-X", "+X"
+    return "+Y", "-Y"
+
+
 def _angle_range_tenths(a_from, a_to):
     """Slider degrees -> inclusive integer range in tenths of a degree.
     Blender stores the sliders as float32 (0.1 -> 0.10000000149), so compare
@@ -61,22 +70,26 @@ def _angle_range_tenths(a_from, a_to):
     return (lo, hi) if lo <= hi else (hi, lo)
 
 
-def _uv_axes_for(major, fn, flip, ax_x, ax_y, ax_z, eps=0.0):
+def _uv_axes_for(major, fn, flip, ax_x, ax_y, ax_z, eps=0.0, opposite=False):
     """U/V projection axes for a face projected along box axis `major`.
     flip=True turns the face over (U mirrored) when its normal looks to the
-    side that ordinary wall faces of that axis already flip (X: -X, Y: +Y);
-    for Z no such rule existed, so flip mirrors U on down-facing faces."""
+    flipped side of the axis. Default side (what ordinary wall faces already
+    did): X: -X, Y: +Y; Z had no rule, so it is -Z (down-facing).
+    opposite=True flips the other side instead (X: +X, Y: -Y, Z: +Z)."""
     if major == 'Y':
         # box XZ plane -> U along ax_x, V along ax_z
-        ua = -ax_x if (flip and fn.dot(ax_y) > eps) else ax_x
-        return ua, ax_z
+        d = fn.dot(ax_y)
+        hit = (d < -eps) if opposite else (d > eps)
+        return (-ax_x if (flip and hit) else ax_x), ax_z
     if major == 'Z':
         # box XY plane -> U along ax_x, V along ax_y
-        ua = -ax_x if (flip and fn.dot(ax_z) < -eps) else ax_x
-        return ua, ax_y
+        d = fn.dot(ax_z)
+        hit = (d > eps) if opposite else (d < -eps)
+        return (-ax_x if (flip and hit) else ax_x), ax_y
     # box YZ plane -> U along ax_y, V along ax_z
-    ua = -ax_y if (flip and fn.dot(ax_x) < -eps) else ax_y
-    return ua, ax_z
+    d = fn.dot(ax_x)
+    hit = (d > eps) if opposite else (d < -eps)
+    return (-ax_y if (flip and hit) else ax_y), ax_z
 
 
 def _cell_uv_rotate(u, v, rot):
@@ -104,11 +117,14 @@ def _priority_layers(s):
         'flip1': s.priority_flip_back,
         'flip2': s.secondary_flip_back,
         'flip3': s.remainder_flip_back,
+        'opp1': s.priority_flip_side == 'OPPOSITE',
+        'opp2': s.secondary_flip_side == 'OPPOSITE',
+        'opp3': s.remainder_flip_side == 'OPPOSITE',
     }
 
 
 def _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z):
-    """(major, flip, eps) for a face normal `fn` (see _apply_tile_uvs)."""
+    """(major, flip, eps, opposite) for a face normal `fn`."""
     axis_vec = {'X': ax_x, 'Y': ax_y, 'Z': ax_z}
 
     def angle_tenths(fn_unit, axis):
@@ -120,13 +136,13 @@ def _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z):
         a1, a2, a3 = layers['axes']
         lo, hi = layers['range1']
         if lo <= angle_tenths(fn_u, a1) <= hi:
-            return a1, layers['flip1'], 1e-4
+            return a1, layers['flip1'], 1e-4, layers['opp1']
         if layers['use2']:
             lo, hi = layers['range2']
             if lo <= angle_tenths(fn_u, a2) <= hi:
-                return a2, layers['flip2'], 1e-4
+                return a2, layers['flip2'], 1e-4, layers['opp2']
             if layers['use3']:
-                return a3, layers['flip3'], 1e-4
+                return a3, layers['flip3'], 1e-4, layers['opp3']
 
     # Legacy rule: which box face is this mesh face most parallel to?
     dot_x = abs(fn.dot(ax_x))
@@ -138,7 +154,7 @@ def _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z):
         major = 'Z'
     else:
         major = 'X'
-    return major, major != 'Z', 0.0   # legacy: X/Y flip, Z never
+    return major, major != 'Z', 0.0, False   # legacy: X/Y flip, Z never
 
 
 def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
@@ -175,9 +191,9 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
         else:        stats['ngons'] += 1
 
         fn = face.normal
-        major, flip, eps = _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z)
+        major, flip, eps, opp = _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z)
 
-        ua, va = _uv_axes_for(major, fn, flip, ax_x, ax_y, ax_z, eps)
+        ua, va = _uv_axes_for(major, fn, flip, ax_x, ax_y, ax_z, eps, opp)
 
         # Face center -> tile cell (keeps all verts of one face in same cell).
         # Projection Box origin is the center of the preview tile, so cell
@@ -1206,8 +1222,8 @@ def _create_tile_preview(context, s):
         # Same decision as Apply: which axis/layer owns this face and whether
         # it is turned over, so toggles are visible on the preview.
         fn = face_normals[mode]
-        major, flip, eps = _choose_axis_and_flip(fn, layers, *box_axes)
-        ua, va = _uv_axes_for(major, fn, flip, *box_axes, eps)
+        major, flip, eps, opp = _choose_axis_and_flip(fn, layers, *box_axes)
+        ua, va = _uv_axes_for(major, fn, flip, *box_axes, eps, opp)
         u, v = _cell_uv_rotate(co.dot(ua) + 0.5, co.dot(va) + 0.5, rotation)
         return remap_uv(u, v)
 
@@ -1462,6 +1478,16 @@ class TC_Settings(PropertyGroup):
         default=False,
         update=_refresh_tile_preview,
     )
+    priority_flip_side: EnumProperty(
+        name="Flip side",
+        description="Which side of this layer's axis Flip Back Faces turns over",
+        items=[
+            ('DEFAULT',  "Default side",  "The side that was flipped before: X: -X, Y: +Y, Z: bottom"),
+            ('OPPOSITE', "Opposite side", "The other side of the axis: X: +X, Y: -Y, Z: top"),
+        ],
+        default='DEFAULT',
+        update=_refresh_tile_preview,
+    )
     use_secondary_axis: BoolProperty(
         name="Layer 2",
         description="Second priority layer: among faces not caught by layer 1, faces within the angle range of the second axis project along it",
@@ -1495,6 +1521,16 @@ class TC_Settings(PropertyGroup):
         default=True,
         update=_refresh_tile_preview,
     )
+    secondary_flip_side: EnumProperty(
+        name="Flip side",
+        description="Which side of this layer's axis Flip Back Faces turns over",
+        items=[
+            ('DEFAULT',  "Default side",  "The side that was flipped before: X: -X, Y: +Y, Z: bottom"),
+            ('OPPOSITE', "Opposite side", "The other side of the axis: X: +X, Y: -Y, Z: top"),
+        ],
+        default='DEFAULT',
+        update=_refresh_tile_preview,
+    )
     use_remainder_axis: BoolProperty(
         name="Layer 3",
         description="Third priority layer: faces not caught by layers 1 and 2 project along the remaining axis. Off = nearest-axis rule (may be chaotic near 45 degrees)",
@@ -1505,6 +1541,16 @@ class TC_Settings(PropertyGroup):
         name="Flip Back Faces",
         description="Turn over (mirror U of) the remaining faces that look away from the remaining axis, like gluing the paper on the other side. Off = straight-through projection",
         default=True,
+        update=_refresh_tile_preview,
+    )
+    remainder_flip_side: EnumProperty(
+        name="Flip side",
+        description="Which side of this layer's axis Flip Back Faces turns over",
+        items=[
+            ('DEFAULT',  "Default side",  "The side that was flipped before: X: -X, Y: +Y, Z: bottom"),
+            ('OPPOSITE', "Opposite side", "The other side of the axis: X: +X, Y: -Y, Z: top"),
+        ],
+        default='DEFAULT',
         update=_refresh_tile_preview,
     )
     mark_seams: BoolProperty(
@@ -2469,7 +2515,7 @@ class TC_PT_Main(Panel):
         layout = self.layout
 
         info = layout.column(align=True)
-        info.label(text="v0.6.12")
+        info.label(text="v0.6.13")
         info.label(text="Alpha mobile-game tiling tool.", icon='INFO')
         info.label(text="Use a flat, lying reference tile plane.")
         info.label(text="Rectangular tiles work; square tiles are safer.")
@@ -2512,103 +2558,65 @@ class TC_PT_TileGrid(Panel):
         if not s.use_priority_axis:
             layout.label(text="Off: faces near 45 deg may project chaotically",
                          icon='ERROR')
+            return
 
+        a1, a2, a3 = _resolve_priority_axes(s)
 
-class TC_PT_TileGridLayer1(Panel):
-    bl_label = "Layer 1"
-    bl_idname = "TC_PT_TILE_GRID_LAYER1"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'Tile Cutter'
-    bl_parent_id = "TC_PT_TILE_GRID"
+        def side_row(box, prop, axis, enabled=True):
+            default_txt, opposite_txt = _flip_side_labels(axis)
+            col = box.column(align=True)
+            col.enabled = enabled
+            col.label(text="Flip side:")
+            row = col.row(align=True)
+            row.prop_enum(s, prop, 'DEFAULT', text=default_txt)
+            row.prop_enum(s, prop, 'OPPOSITE', text=opposite_txt)
 
-    @classmethod
-    def poll(cls, context):
-        return context.scene.tc_settings.use_priority_axis
-
-    def draw_header(self, context):
-        a1, a2, a3 = _resolve_priority_axes(context.scene.tc_settings)
-        self.layout.label(text=f"· axis {a1}")
-
-    def draw(self, context):
-        layout = self.layout
-        s = context.scene.tc_settings
-        layout.prop(s, "priority_axis", expand=True)
-        row = layout.row(align=True)
+        # ── Layer 1 ──
+        layout.separator(factor=1.5)
+        box1 = layout.box()
+        box1.label(text=f"Layer 1  ·  axis {a1}")
+        box1.prop(s, "priority_axis", expand=True)
+        row = box1.row(align=True)
         row.prop(s, "priority_angle_from")
         row.prop(s, "priority_angle_to")
-        layout.prop(s, "priority_flip_back")
+        box1.prop(s, "priority_flip_back")
+        side_row(box1, "priority_flip_side", a1, s.priority_flip_back)
 
-
-class TC_PT_TileGridLayer2(Panel):
-    bl_label = "Layer 2"
-    bl_idname = "TC_PT_TILE_GRID_LAYER2"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'Tile Cutter'
-    bl_parent_id = "TC_PT_TILE_GRID"
-
-    @classmethod
-    def poll(cls, context):
-        return context.scene.tc_settings.use_priority_axis
-
-    def draw_header(self, context):
-        s = context.scene.tc_settings
-        a1, a2, a3 = _resolve_priority_axes(s)
-        row = self.layout.row(align=True)
-        row.prop(s, "use_secondary_axis", text="")
-        row.label(text=f"· axis {a2}")
-
-    def draw(self, context):
-        layout = self.layout
-        s = context.scene.tc_settings
-        a1, a2, a3 = _resolve_priority_axes(s)
+        # ── Layer 2 ──
+        layout.separator(factor=1.5)
+        box2 = layout.box()
+        box2.prop(s, "use_secondary_axis", text=f"Layer 2  ·  axis {a2}")
         if not s.use_secondary_axis:
-            layout.label(text="Off: faces near 45 deg may project chaotically",
-                         icon='ERROR')
-        col = layout.column()
-        col.enabled = s.use_secondary_axis
-        row = col.row(align=True)
+            box2.label(text="Off: faces near 45 deg may project chaotically",
+                       icon='ERROR')
+        col2 = box2.column()
+        col2.enabled = s.use_secondary_axis
+        row = col2.row(align=True)
         for ax in _AXIS_ORDER:
             if ax != a1:
                 row.prop_enum(s, "secondary_axis", ax)
-        row = col.row(align=True)
+        row = col2.row(align=True)
         row.prop(s, "secondary_angle_from")
         row.prop(s, "secondary_angle_to")
-        col.prop(s, "secondary_flip_back")
+        col2.prop(s, "secondary_flip_back")
+        side_row(col2, "secondary_flip_side", a2, s.secondary_flip_back)
 
-
-class TC_PT_TileGridLayer3(Panel):
-    bl_label = "Layer 3"
-    bl_idname = "TC_PT_TILE_GRID_LAYER3"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = 'Tile Cutter'
-    bl_parent_id = "TC_PT_TILE_GRID"
-
-    @classmethod
-    def poll(cls, context):
-        return context.scene.tc_settings.use_priority_axis
-
-    def draw_header(self, context):
-        s = context.scene.tc_settings
-        a1, a2, a3 = _resolve_priority_axes(s)
-        row = self.layout.row(align=True)
-        row.enabled = s.use_secondary_axis
-        row.prop(s, "use_remainder_axis", text="")
-        row.label(text=f"· remaining axis {a3}")
-
-    def draw(self, context):
-        layout = self.layout
-        s = context.scene.tc_settings
+        # ── Layer 3 ──
+        layout.separator(factor=1.5)
+        box3 = layout.box()
+        row3 = box3.row()
+        row3.enabled = s.use_secondary_axis
+        row3.prop(s, "use_remainder_axis",
+                  text=f"Layer 3  ·  remaining axis {a3}")
         if not s.use_secondary_axis:
-            layout.label(text="Needs Layer 2", icon='INFO')
+            box3.label(text="Needs Layer 2", icon='INFO')
         elif not s.use_remainder_axis:
-            layout.label(text="Off: nearest-axis rule, may be chaotic near 45 deg",
-                         icon='ERROR')
-        col = layout.column()
-        col.enabled = s.use_secondary_axis and s.use_remainder_axis
-        col.prop(s, "remainder_flip_back")
+            box3.label(text="Off: nearest-axis rule, may be chaotic near 45 deg",
+                       icon='ERROR')
+        col3 = box3.column()
+        col3.enabled = s.use_secondary_axis and s.use_remainder_axis
+        col3.prop(s, "remainder_flip_back")
+        side_row(col3, "remainder_flip_side", a3, s.remainder_flip_back)
 
 
 class TC_PT_TileGridApply(Panel):
@@ -2778,9 +2786,6 @@ classes = (
     TC_OT_FillVertexPaintColor,
     TC_PT_Main,
     TC_PT_TileGrid,
-    TC_PT_TileGridLayer1,
-    TC_PT_TileGridLayer2,
-    TC_PT_TileGridLayer3,
     TC_PT_TileGridApply,
     TC_PT_CylinderProjection,
     TC_PT_UVWMapProjection,
