@@ -153,6 +153,8 @@ def _create_proj_box(context, s):
 
     box_name = f"TC_Box_{target.name}"
     box = bpy.data.objects.get(box_name)
+    if box is not None and box.type != 'EMPTY':
+        box = None   # a foreign object has this name: make our own (unique name)
     if box is None:
         box = bpy.data.objects.new(box_name, None)
         box.empty_display_type = 'CUBE'

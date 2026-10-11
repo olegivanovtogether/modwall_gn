@@ -50,11 +50,14 @@ def _draw_tile_setup(layout, context):
 
     layout.prop(s, "duplicate_before_apply")
 
-    if s.proj_box is not None:
+    if s.target_object is not None and s.reference_tile is not None:
         layout.separator()
-        layout.label(text="Proj Box: move / scale / rotate it")
-        layout.operator("tilecutter.reset_proj_box",
-                        text="Reset Proj Box", icon='LOOP_BACK')
+        layout.label(text="Controller: move / scale / rotate it")
+        col = layout.column(align=True)
+        col.operator("tilecutter.select_controller",
+                     text="Select Controller", icon='EMPTY_ARROWS')
+        col.operator("tilecutter.reset_proj_box",
+                     text="Reset Proj Box", icon='LOOP_BACK')
 
     layout.separator()
     layout.label(text="Texture direction")

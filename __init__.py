@@ -48,6 +48,7 @@ _modules_loaded = True
 classes = (
     props.TC_Settings,
     ops_tile_grid.TC_OT_Apply,
+    ops_tile_grid.TC_OT_SelectController,
     ops_tile_grid.TC_OT_ResetProjBox,
     ops_tile_grid.TC_OT_RotateTexture,
     ops_cylinder.TC_OT_SelectCylinderControl,

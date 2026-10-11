@@ -9,7 +9,12 @@ from bpy.props import (
 )
 from .bmesh_baker import get_tile_bounds, slice_mesh_with_grid
 from .uv_geom import _apply_tile_uvs, _priority_layers, _process_seams
-from .tile_grid import _create_tile_preview, _delete_proj_box, _set_proj_box_to_tile_size
+from .tile_grid import (
+    _create_proj_box,
+    _create_tile_preview,
+    _delete_proj_box,
+    _set_proj_box_to_tile_size,
+)
 
 
 class TC_OT_Apply(Operator):
@@ -134,6 +139,95 @@ class TC_OT_Apply(Operator):
             f"tri:{uv_stats['triangles']} "
             f"ngon:{uv_stats['ngons']}"
         )
+        return {'FINISHED'}
+
+
+class TC_OT_SelectController(Operator):
+    """Select the Tile Grid controller (the Projection Box empty).
+
+    The controller is the wire cube (empty) that defines the grid; the
+    semi-transparent preview cube is a child of it and is not selectable.
+    Useful when the controller sits inside the target mesh and cannot be
+    picked with the mouse.
+    """
+    bl_idname = "tilecutter.select_controller"
+    bl_label = "Select Controller"
+    bl_description = ("Select the Tile Grid controller (Projection Box) to move, "
+                      "rotate or scale it, even when it is inside the mesh")
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        s = context.scene.tc_settings
+        return s.target_object is not None and s.reference_tile is not None
+
+    def execute(self, context):
+        s = context.scene.tc_settings
+        target = s.target_object
+        view_objects = context.view_layer.objects
+
+        # Find the controller without changing anything yet.
+        box = s.proj_box if (s.proj_box is not None and s.proj_box.type == 'EMPTY') else None
+        created = False
+        if box is None:
+            orphan = bpy.data.objects.get(f"TC_Box_{target.name}")
+            if orphan is not None and orphan.type == 'EMPTY':
+                # an earlier controller that lost its link: reuse it as it is
+                if orphan.name not in view_objects:
+                    self.report({'WARNING'}, "Controller is not in the current view layer")
+                    return {'CANCELLED'}
+                s.proj_box = orphan
+                box = orphan
+                if s.tile_preview is None or s.tile_preview.parent != box:
+                    _create_tile_preview(context, s)
+            else:
+                _create_proj_box(context, s)
+                box = s.proj_box
+                created = True
+                # a freshly linked object appears in view_layer.objects
+                # only after the view layer is updated
+                context.view_layer.update()
+        elif box.name not in view_objects:
+            self.report({'WARNING'}, "Controller is not in the current view layer")
+            return {'CANCELLED'}
+
+        def fail(message):
+            if created:
+                _delete_proj_box(s)
+                s.proj_box = None
+            self.report({'WARNING'}, message)
+            return {'CANCELLED'}
+
+        if box is None or box.type != 'EMPTY' or box.name not in view_objects:
+            return fail("Controller is not available")
+
+        # Leave Edit / Sculpt / Paint mode first, otherwise selection changes
+        # would apply to the wrong mode.
+        if context.mode != 'OBJECT' and context.object is not None:
+            try:
+                bpy.ops.object.mode_set(mode='OBJECT')
+            except RuntimeError:
+                pass
+            if context.mode != 'OBJECT':
+                return fail("Could not leave the current mode")
+
+        box.hide_select = False
+        try:
+            box.hide_set(False)
+        except RuntimeError:
+            pass
+        box.hide_viewport = False
+
+        for obj in view_objects:
+            if obj.select_get():
+                obj.select_set(False)
+        box.select_set(True)
+        context.view_layer.objects.active = box
+
+        if not box.select_get() or not box.visible_get():
+            return fail("Controller cannot be selected (hidden collection or object?)")
+
+        self.report({'INFO'}, "Controller selected")
         return {'FINISHED'}
 
 

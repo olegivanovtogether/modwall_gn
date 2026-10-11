@@ -35,6 +35,7 @@ Options:
 
 - `Target Wall`, `Reference Tile`
 - `Duplicate Before Apply` (default on): work on a copy.
+- `Select Controller`: selects the controller (the wire cube, i.e. the Projection Box) even when it sits inside the mesh. The semi-transparent preview cube is a separate, smaller object that follows the controller and cannot be selected.
 - `Reset Proj Box`
 - `Priority Axis` (default on) with three priority layers, see below.
 - `Mark Seams`: seams on tile borders, sharp corners and boundary edges. `Corner Angle` sets the sharpness threshold.
