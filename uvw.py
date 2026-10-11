@@ -2,8 +2,17 @@
 
 import bpy
 import math
+from mathutils import Vector
 from .bmesh_baker import get_tile_bounds
 from .preview_mat import _preview_material, _wire_material
+from .uv_geom import (
+    _AXIS_ORDER,
+    _cell_uv_rotate,
+    _choose_axis_and_flip,
+    _priority_layers,
+    _swap_cell_scale,
+    _uv_axes_for,
+)
 
 
 def _delete_uvw_gizmo(s):
@@ -77,19 +86,30 @@ def _uvw_preview_box(context, s, gizmo, ref):
     uv_layer = mesh.uv_layers.new(name="UVMap")
     face_modes = ("bottom", "top", "front", "right", "back", "left")
 
+    layers = _priority_layers(s, "uvw_") if s.uvw_use_priority_axis else None
+    rotation = int(s.uvw_texture_rotation)
+    box_axes = (Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)), Vector((0.0, 0.0, 1.0)))
+    face_normals = {
+        "bottom": Vector((0.0, 0.0, -1.0)),
+        "top":    Vector((0.0, 0.0, 1.0)),
+        "front":  Vector((0.0, -1.0, 0.0)),
+        "right":  Vector((1.0, 0.0, 0.0)),
+        "back":   Vector((0.0, 1.0, 0.0)),
+        "left":   Vector((-1.0, 0.0, 0.0)),
+    }
+
     def preview_uv(mode, co):
-        x = co.x + 0.5
-        y = co.y + 0.5
-        z = co.z + 0.5
-        if mode == "back":
-            return _remap_preview_uv(ref, 1.0 - x, z)
-        if mode == "right":
-            return _remap_preview_uv(ref, y, z)
-        if mode == "left":
-            return _remap_preview_uv(ref, 1.0 - y, z)
-        if mode in {"top", "bottom"}:
-            return _remap_preview_uv(ref, x, y)
-        return _remap_preview_uv(ref, x, z)
+        # Same decision as Apply: axis/layer of this face, local flip, then
+        # texture direction and the global U / V flips.
+        fn = face_normals[mode]
+        major, flip, eps, opp = _choose_axis_and_flip(fn, layers, *box_axes)
+        ua, va = _uv_axes_for(major, fn, flip, *box_axes, eps, opp)
+        u, v = _cell_uv_rotate(co.dot(ua) + 0.5, co.dot(va) + 0.5, rotation)
+        if s.uvw_flip_u:
+            u = 1.0 - u
+        if s.uvw_flip_v:
+            v = 1.0 - v
+        return _remap_preview_uv(ref, u, v)
 
     for poly, mode in zip(mesh.polygons, face_modes):
         for loop_index in poly.loop_indices:
@@ -242,7 +262,12 @@ def _create_uvw_gizmo(context, s):
     if mapping == 'PLANAR':
         gizmo.scale = (tile_u, tile_v, 1.0)
     elif mapping == 'BOX':
-        gizmo.scale = (tile_u, tile_u, tile_v)
+        if int(s.uvw_texture_rotation) in (90, 270):
+            gizmo.scale = (tile_v, tile_v, tile_u)
+            gizmo["tc_vertical"] = True
+        else:
+            gizmo.scale = (tile_u, tile_u, tile_v)
+            gizmo["tc_vertical"] = False
     else:  # CYLINDER
         radius = max((tile_u * max(s.uvw_cylinder_tiles_around, 1)) / (2.0 * math.pi), 0.001)
         gizmo.scale = (radius, radius, tile_v)
@@ -275,7 +300,15 @@ def _sync_uvw_gizmo(self, context):
 
 
 def _apply_uvw_box_uv(bm, b_min, b_max, tile_u, tile_v, gizmo_local_mat,
-                      flip_u=False, flip_v=False):
+                      flip_u=False, flip_v=False, layers=None, rotation=0):
+    """Box projection from the gizmo axes.
+
+    layers=None keeps the classic rule (axis with the largest normal
+    component, ties Y > Z > X). With `layers` (see uv_geom._priority_layers)
+    the axis of each face is chosen by the priority layers, with per-layer
+    flip. Order: axis + local flip, continuous projection, texture direction
+    (rotation about the cell centre), global U / V flip, remap.
+    """
     uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
     tile_u = max(tile_u, 0.001)
     tile_v = max(tile_v, 0.001)
@@ -285,27 +318,18 @@ def _apply_uvw_box_uv(bm, b_min, b_max, tile_u, tile_v, gizmo_local_mat,
     ax_y = rot_mat.col[1].normalized()
     ax_z = rot_mat.col[2].normalized()
     box_origin = gizmo_local_mat.to_translation()
+    bm.normal_update()
 
     for face in bm.faces:
         fn = face.normal
-        dot_x = abs(fn.dot(ax_x))
-        dot_y = abs(fn.dot(ax_y))
-        dot_z = abs(fn.dot(ax_z))
-
-        if dot_y >= dot_x and dot_y >= dot_z:
-            ua = -ax_x if fn.dot(ax_y) > 0 else ax_x
-            va = ax_z
-        elif dot_z >= dot_x:
-            ua = ax_x
-            va = ax_y
-        else:
-            ua = -ax_y if fn.dot(ax_x) < 0 else ax_y
-            va = ax_z
+        major, flip, eps, opp = _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z)
+        ua, va = _uv_axes_for(major, fn, flip, ax_x, ax_y, ax_z, eps, opp)
 
         for loop in face.loops:
             p = loop.vert.co - box_origin
             uf = p.dot(ua) / tile_u + 0.5
             vf = p.dot(va) / tile_v + 0.5
+            uf, vf = _cell_uv_rotate(uf, vf, rotation)
             if flip_u:
                 uf = 1.0 - uf
             if flip_v:
@@ -390,3 +414,64 @@ def _apply_uvw_cylinder_uv(bm, gizmo_local_mat, tiles_around, tile_v,
                 b_min[0] + uf * (b_max[0] - b_min[0]),
                 b_min[1] + vf * (b_max[1] - b_min[1]),
             )
+
+
+# ── Priority layers: callbacks (do not recreate the gizmo) ────────────────────
+
+def _delete_uvw_preview_objects(s):
+    for attr in ('uvw_gizmo_preview', 'uvw_gizmo_preview_wire'):
+        obj = getattr(s, attr, None)
+        if obj is None:
+            continue
+        try:
+            mesh = obj.data
+            bpy.data.objects.remove(obj, do_unlink=True)
+            if mesh is not None and mesh.users == 0:
+                bpy.data.meshes.remove(mesh)
+        except Exception:
+            pass
+        try:
+            setattr(s, attr, None)
+        except Exception:
+            pass
+
+
+def _refresh_uvw_preview(self, context):
+    """Rebuild only the preview objects; the gizmo and its transform stay."""
+    s = context.scene.tc_settings
+    gizmo = s.uvw_gizmo
+    ref = s.uvw_reference_tile
+    if gizmo is None or ref is None:
+        return
+    _delete_uvw_preview_objects(s)
+    mapping = s.uvw_mapping_type
+    if mapping == 'BOX':
+        _uvw_preview_box(context, s, gizmo, ref)
+    elif mapping == 'PLANAR':
+        _uvw_preview_plane(context, s, gizmo, ref)
+    else:
+        _uvw_preview_cylinder(context, s, gizmo, ref)
+
+
+def _sync_uvw_priority_axes(self, context):
+    """Layer 1 axis changed: swap with layer 2 if it used that axis."""
+    new = self.uvw_priority_axis
+    old = self.uvw_priority_axis_prev
+    if self.uvw_secondary_axis == new:
+        if old in _AXIS_ORDER and old != new:
+            self.uvw_secondary_axis = old
+        else:
+            self.uvw_secondary_axis = next(a for a in _AXIS_ORDER if a != new)
+    self.uvw_priority_axis_prev = new
+    _refresh_uvw_preview(self, context)
+
+
+def _on_uvw_texture_rotation(self, context):
+    """Horizontal <-> vertical swaps the cell width / height of a Box gizmo."""
+    s = context.scene.tc_settings
+    gizmo = s.uvw_gizmo
+    if gizmo is not None and s.uvw_mapping_type == 'BOX':
+        vertical = int(s.uvw_texture_rotation) in (90, 270)
+        if bool(gizmo.get("tc_vertical", False)) != vertical:
+            _swap_cell_scale(gizmo, vertical)
+    _refresh_uvw_preview(self, context)

@@ -13,7 +13,12 @@ from bpy.props import (
 )
 from .tile_grid import _on_texture_rotation, _refresh_tile_preview, _sync_proj_box
 from .cylinder import _sync_cylinder_preview
-from .uvw import _sync_uvw_gizmo
+from .uvw import (
+    _on_uvw_texture_rotation,
+    _refresh_uvw_preview,
+    _sync_uvw_gizmo,
+    _sync_uvw_priority_axes,
+)
 from .callbacks import _poll_mesh, _sync_priority_axes, _sync_seam_options, _sync_vertex_paint_settings
 
 
@@ -101,11 +106,13 @@ class TC_Settings(PropertyGroup):
         name="From",
         description="Minimum angle between the face normal and the layer 1 axis (degrees)",
         default=0.0, min=0.0, max=90.0,
+        update=_refresh_tile_preview,
     )
     priority_angle_to: FloatProperty(
         name="To",
         description="Maximum angle between the face normal and the layer 1 axis (degrees); the boundary itself is included",
         default=50.0, min=0.0, max=90.0,
+        update=_refresh_tile_preview,
     )
     priority_flip_back: BoolProperty(
         name="Flip Back Faces",
@@ -144,11 +151,13 @@ class TC_Settings(PropertyGroup):
         name="From",
         description="Minimum angle between the face normal and the layer 2 axis (degrees)",
         default=0.0, min=0.0, max=90.0,
+        update=_refresh_tile_preview,
     )
     secondary_angle_to: FloatProperty(
         name="To",
         description="Maximum angle between the face normal and the layer 2 axis (degrees); the boundary itself is included",
         default=50.0, min=0.0, max=90.0,
+        update=_refresh_tile_preview,
     )
     secondary_flip_back: BoolProperty(
         name="Flip Back Faces",
@@ -331,11 +340,143 @@ class TC_Settings(PropertyGroup):
         name="U Flip",
         description="Mirror UV along U axis",
         default=False,
+        update=_refresh_uvw_preview,
     )
     uvw_flip_v: BoolProperty(
         name="V Flip",
         description="Mirror UV along V axis",
         default=False,
+        update=_refresh_uvw_preview,
+    )
+    uvw_texture_rotation: EnumProperty(
+        name="Texture direction",
+        description="How the texture is read: rotate the whole tile layout in 90 degree steps (use Vertical when the texture image is stored turned on its side)",
+        items=[
+            ('0',   "0° · Horizontal", "Texture is read as stored"),
+            ('90',  "90° · Vertical", "Texture turned by 90 degrees; cell width and height are swapped"),
+            ('180', "180° · Horizontal, upside down", "Texture turned by 180 degrees"),
+            ('270', "270° · Vertical, upside down", "Texture turned by 270 degrees; cell width and height are swapped"),
+        ],
+        default='0',
+        update=_on_uvw_texture_rotation,
+    )
+    uvw_use_priority_axis: BoolProperty(
+        name="Priority Axis",
+        description="Faces whose normal is within the angle range of a priority axis always project along that axis (avoids chaos near 45 degrees)",
+        default=True,
+        update=_refresh_uvw_preview,
+    )
+    uvw_priority_axis: EnumProperty(
+        name="Axis",
+        description="Layer 1: Projection Box axis that wins inside the angle range",
+        items=[
+            ('X', "X", "Projection Box X axis"),
+            ('Y', "Y", "Projection Box Y axis"),
+            ('Z', "Z", "Projection Box Z axis (ceiling / floor)"),
+        ],
+        default='Z',
+        update=_sync_uvw_priority_axes,
+    )
+    uvw_priority_axis_prev: StringProperty(
+        name="Previous layer 1 axis",
+        description="Internal: remembers the layer 1 axis before the last change",
+        default='Z',
+        options={'HIDDEN'},
+    )
+    uvw_priority_angle_from: FloatProperty(
+        name="From",
+        description="Minimum angle between the face normal and the layer 1 axis (degrees)",
+        default=0.0, min=0.0, max=90.0,
+        update=_refresh_uvw_preview,
+    )
+    uvw_priority_angle_to: FloatProperty(
+        name="To",
+        description="Maximum angle between the face normal and the layer 1 axis (degrees); the boundary itself is included",
+        default=50.0, min=0.0, max=90.0,
+        update=_refresh_uvw_preview,
+    )
+    uvw_priority_flip_back: BoolProperty(
+        name="Flip Back Faces",
+        description="Turn over (mirror U of) the faces of this layer that look away from the axis, like gluing the paper on the other side. Off = straight-through projection",
+        default=False,
+        update=_refresh_uvw_preview,
+    )
+    uvw_priority_flip_side: EnumProperty(
+        name="Flip side",
+        description="Which side of this layer's axis Flip Back Faces turns over",
+        items=[
+            ('DEFAULT',  "Default side",  "The side that was flipped before: X: -X, Y: +Y, Z: bottom"),
+            ('OPPOSITE', "Opposite side", "The other side of the axis: X: +X, Y: -Y, Z: top"),
+        ],
+        default='DEFAULT',
+        update=_refresh_uvw_preview,
+    )
+    uvw_use_secondary_axis: BoolProperty(
+        name="Layer 2",
+        description="Second priority layer: among faces not caught by layer 1, faces within the angle range of the second axis project along it",
+        default=True,
+        update=_refresh_uvw_preview,
+    )
+    uvw_secondary_axis: EnumProperty(
+        name="Axis",
+        description="Layer 2: one of the two axes left after layer 1",
+        items=[
+            ('X', "X", "Projection Box X axis"),
+            ('Y', "Y", "Projection Box Y axis"),
+            ('Z', "Z", "Projection Box Z axis"),
+        ],
+        default='X',
+        update=_refresh_uvw_preview,
+    )
+    uvw_secondary_angle_from: FloatProperty(
+        name="From",
+        description="Minimum angle between the face normal and the layer 2 axis (degrees)",
+        default=0.0, min=0.0, max=90.0,
+        update=_refresh_uvw_preview,
+    )
+    uvw_secondary_angle_to: FloatProperty(
+        name="To",
+        description="Maximum angle between the face normal and the layer 2 axis (degrees); the boundary itself is included",
+        default=50.0, min=0.0, max=90.0,
+        update=_refresh_uvw_preview,
+    )
+    uvw_secondary_flip_back: BoolProperty(
+        name="Flip Back Faces",
+        description="Turn over (mirror U of) the faces of this layer that look away from the axis, like gluing the paper on the other side. Off = straight-through projection",
+        default=True,
+        update=_refresh_uvw_preview,
+    )
+    uvw_secondary_flip_side: EnumProperty(
+        name="Flip side",
+        description="Which side of this layer's axis Flip Back Faces turns over",
+        items=[
+            ('DEFAULT',  "Default side",  "The side that was flipped before: X: -X, Y: +Y, Z: bottom"),
+            ('OPPOSITE', "Opposite side", "The other side of the axis: X: +X, Y: -Y, Z: top"),
+        ],
+        default='DEFAULT',
+        update=_refresh_uvw_preview,
+    )
+    uvw_use_remainder_axis: BoolProperty(
+        name="Layer 3",
+        description="Third priority layer: faces not caught by layers 1 and 2 project along the remaining axis. Off = nearest-axis rule (may be chaotic near 45 degrees)",
+        default=True,
+        update=_refresh_uvw_preview,
+    )
+    uvw_remainder_flip_back: BoolProperty(
+        name="Flip Back Faces",
+        description="Turn over (mirror U of) the remaining faces that look away from the remaining axis, like gluing the paper on the other side. Off = straight-through projection",
+        default=True,
+        update=_refresh_uvw_preview,
+    )
+    uvw_remainder_flip_side: EnumProperty(
+        name="Flip side",
+        description="Which side of this layer's axis Flip Back Faces turns over",
+        items=[
+            ('DEFAULT',  "Default side",  "The side that was flipped before: X: -X, Y: +Y, Z: bottom"),
+            ('OPPOSITE', "Opposite side", "The other side of the axis: X: +X, Y: -Y, Z: top"),
+        ],
+        default='DEFAULT',
+        update=_refresh_uvw_preview,
     )
     uvw_gizmo: PointerProperty(
         name="UVW Gizmo",

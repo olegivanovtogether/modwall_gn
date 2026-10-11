@@ -3,7 +3,13 @@
 import bpy
 from mathutils import Vector
 from .bmesh_baker import get_tile_bounds
-from .uv_geom import _cell_uv_rotate, _choose_axis_and_flip, _priority_layers, _uv_axes_for
+from .uv_geom import (
+    _cell_uv_rotate,
+    _choose_axis_and_flip,
+    _priority_layers,
+    _swap_cell_scale,
+    _uv_axes_for,
+)
 from .preview_mat import _preview_material, _wire_material
 
 
@@ -208,10 +214,7 @@ def _on_texture_rotation(self, context):
     if box is not None:
         vertical = int(s.texture_rotation) in (90, 270)
         if bool(box.get("tc_vertical", False)) != vertical:
-            sx, sy, sz = box.scale
-            new_y = sz if abs(sy - sx) < 1e-6 else sy
-            box.scale = (sz, new_y, sx)
-            box["tc_vertical"] = vertical
+            _swap_cell_scale(box, vertical)
     _refresh_tile_preview(self, context)
 
 

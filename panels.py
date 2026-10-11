@@ -69,16 +69,16 @@ def _draw_tile_setup(layout, context):
     right.direction = 1
 
 
-def _draw_tile_layers(layout, context):
-    """Tile Grid, layers plate: priority axis and the three layers."""
-    s = context.scene.tc_settings
-    layout.prop(s, "use_priority_axis")
-    if not s.use_priority_axis:
+def _draw_priority_layers(layout, s, prefix=""):
+    """Priority axis checkbox and the three layer boxes for the settings set
+    selected by `prefix` ("" Tile Grid, "uvw_" UVW Map)."""
+    layout.prop(s, prefix + "use_priority_axis")
+    if not getattr(s, prefix + "use_priority_axis"):
         layout.label(text="Off: faces near 45 deg may project chaotically",
                      icon='ERROR')
         return
 
-    a1, a2, a3 = _resolve_priority_axes(s)
+    a1, a2, a3 = _resolve_priority_axes(s, prefix)
 
     def side_row(box, prop, layer, axis, enabled=True):
         col = box.column(align=True)
@@ -94,48 +94,72 @@ def _draw_tile_layers(layout, context):
     box1.label(text=f"Layer 1  ·  Top-Bottom  ·  axis {a1}")
     axis_row = box1.row(align=True)
     for ax in _AXIS_ORDER:
-        axis_row.prop_enum(s, "priority_axis", ax)
+        axis_row.prop_enum(s, prefix + "priority_axis", ax)
     row = box1.row(align=True)
-    row.prop(s, "priority_angle_from")
-    row.prop(s, "priority_angle_to")
-    box1.prop(s, "priority_flip_back")
-    side_row(box1, "priority_flip_side", 1, a1, s.priority_flip_back)
+    row.prop(s, prefix + "priority_angle_from")
+    row.prop(s, prefix + "priority_angle_to")
+    box1.prop(s, prefix + "priority_flip_back")
+    side_row(box1, prefix + "priority_flip_side", 1, a1, getattr(s, prefix + "priority_flip_back"))
 
     # ── Layer 2 ──
     layout.separator(factor=1.5)
     box2 = layout.box()
-    box2.prop(s, "use_secondary_axis", text=f"Layer 2  ·  Front-Back  ·  axis {a2}")
-    if not s.use_secondary_axis:
+    box2.prop(s, prefix + "use_secondary_axis", text=f"Layer 2  ·  Front-Back  ·  axis {a2}")
+    if not getattr(s, prefix + "use_secondary_axis"):
         box2.label(text="Off: faces near 45 deg may project chaotically",
                    icon='ERROR')
     col2 = box2.column()
-    col2.enabled = s.use_secondary_axis
+    col2.enabled = getattr(s, prefix + "use_secondary_axis")
     row = col2.row(align=True)
     for ax in _AXIS_ORDER:
         if ax != a1:
-            row.prop_enum(s, "secondary_axis", ax)
+            row.prop_enum(s, prefix + "secondary_axis", ax)
     row = col2.row(align=True)
-    row.prop(s, "secondary_angle_from")
-    row.prop(s, "secondary_angle_to")
-    col2.prop(s, "secondary_flip_back")
-    side_row(col2, "secondary_flip_side", 2, a2, s.secondary_flip_back)
+    row.prop(s, prefix + "secondary_angle_from")
+    row.prop(s, prefix + "secondary_angle_to")
+    col2.prop(s, prefix + "secondary_flip_back")
+    side_row(col2, prefix + "secondary_flip_side", 2, a2, getattr(s, prefix + "secondary_flip_back"))
 
     # ── Layer 3 ──
     layout.separator(factor=1.5)
     box3 = layout.box()
     row3 = box3.row()
-    row3.enabled = s.use_secondary_axis
-    row3.prop(s, "use_remainder_axis",
+    row3.enabled = getattr(s, prefix + "use_secondary_axis")
+    row3.prop(s, prefix + "use_remainder_axis",
               text=f"Layer 3  ·  Left-Right  ·  axis {a3}")
-    if not s.use_secondary_axis:
+    if not getattr(s, prefix + "use_secondary_axis"):
         box3.label(text="Needs Layer 2", icon='INFO')
-    elif not s.use_remainder_axis:
+    elif not getattr(s, prefix + "use_remainder_axis"):
         box3.label(text="Off: nearest-axis rule, may be chaotic near 45 deg",
                    icon='ERROR')
     col3 = box3.column()
-    col3.enabled = s.use_secondary_axis and s.use_remainder_axis
-    col3.prop(s, "remainder_flip_back")
-    side_row(col3, "remainder_flip_side", 3, a3, s.remainder_flip_back)
+    col3.enabled = (getattr(s, prefix + "use_secondary_axis")
+                    and getattr(s, prefix + "use_remainder_axis"))
+    col3.prop(s, prefix + "remainder_flip_back")
+    side_row(col3, prefix + "remainder_flip_side", 3, a3, getattr(s, prefix + "remainder_flip_back"))
+
+
+
+
+def _draw_tile_layers(layout, context):
+    """Tile Grid, layers plate: priority axis and the three layers."""
+    _draw_priority_layers(layout, context.scene.tc_settings, "")
+
+
+def _draw_uvw_layers(layout, context):
+    """UVW Map (Box), layers plate: texture direction and priority layers."""
+    s = context.scene.tc_settings
+    layout.label(text="Texture direction")
+    row = layout.row(align=True)
+    left = row.operator("tilecutter.rotate_texture", text="", icon='LOOP_BACK')
+    left.direction = -1
+    left.prop = "uvw_texture_rotation"
+    row.prop(s, "uvw_texture_rotation", text="")
+    right = row.operator("tilecutter.rotate_texture", text="", icon='LOOP_FORWARDS')
+    right.direction = 1
+    right.prop = "uvw_texture_rotation"
+    layout.separator()
+    _draw_priority_layers(layout, s, "uvw_")
 
 
 def _draw_tile_grid_apply(layout, context):
@@ -375,6 +399,19 @@ class TC_PT_UVWTab(_TabPlate, Panel):
 
     def draw(self, context):
         _draw_uvw(self.layout, context)
+
+
+class TC_PT_UVWLayers(_TabPlate, Panel):
+    bl_label = "Priority layers (Box)"
+    bl_idname = "TC_PT_UVW_LAYERS"
+
+    @classmethod
+    def poll(cls, context):
+        return (_tab_is(context, 'UVW')
+                and context.scene.tc_settings.uvw_mapping_type == 'BOX')
+
+    def draw(self, context):
+        _draw_uvw_layers(self.layout, context)
 
 
 class TC_PT_VertexPaintTab(_TabPlate, Panel):

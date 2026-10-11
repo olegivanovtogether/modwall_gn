@@ -4,7 +4,7 @@
 
 Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, reference-tile material transfer and vertex color painting helpers.
 
-- Version: `0.7.1` (alpha)
+- Version: `0.7.2` (alpha)
 - Blender: 4.5.0+
 - Location: `View3D > Sidebar > ModwallGN`
 - Category: Mesh
@@ -112,6 +112,10 @@ Workflow:
 9. Keep `Copy Material From Reference` enabled (default) to give the result the reference material.
 10. Click `Apply UVW Map`.
 
+#### Priority layers (Box)
+
+For the `Box` mapping the UVW Map tab has the same **Priority layers** plate as Tile Grid (three layers, angle range, `Flip Back Faces` with side, axes swap between layers) and a `Texture direction` control. The settings are separate from Tile Grid (`uvw_*`) and on by default, so faces near 45 degrees no longer flip between projections. Only the axis choice changes: the continuous (repeating) UV projection, the gizmo scale and the global `U Flip` / `V Flip` work as before. Planar and Cylinder do not choose an axis and do not have this plate. Re-apply to recompute an already projected mesh.
+
 ### Vertex Paint (tab)
 
 Helper panel for painting vertex colors on the active mesh without leaving the sidebar.
@@ -133,6 +137,7 @@ See the issue tracker for the current state of each item.
 
 ## Changelog
 
+- **0.7.2**: UVW Map (Box) gets the same priority layers, Flip Back Faces with side and texture direction as Tile Grid (own `uvw_*` settings, on by default), live gizmo preview follows them; reversible cell width/height swap; angle ranges refresh the previews.
 - **0.7.1**: Tile Grid `Select Controller` button; controller and preview cube are clearly separated in the panel.
 - **0.7.0**: code split into modules; single panel `ModwallGN` with module tabs and plates; name `ModwallGN (Simple Tile Cutter)`; safe register / unregister / reload.
 - **0.6.14**: layers swap axes; flip side labels by layer role (Top-Bottom, Front-Back, Left-Right).

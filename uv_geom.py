@@ -8,10 +8,12 @@ import math
 _AXIS_ORDER = ('X', 'Y', 'Z')
 
 
-def _resolve_priority_axes(s):
-    """(layer1, layer2, layer3) axis names; the three are always distinct."""
-    a1 = s.priority_axis if s.priority_axis in _AXIS_ORDER else 'Z'
-    a2 = s.secondary_axis
+def _resolve_priority_axes(s, prefix=""):
+    """(layer1, layer2, layer3) axis names; the three are always distinct.
+    `prefix` selects the settings set ("" Tile Grid, "uvw_" UVW Map)."""
+    primary = getattr(s, prefix + "priority_axis")
+    a1 = primary if primary in _AXIS_ORDER else 'Z'
+    a2 = getattr(s, prefix + "secondary_axis")
     if a2 not in _AXIS_ORDER or a2 == a1:
         a2 = next(a for a in _AXIS_ORDER if a != a1)
     a3 = next(a for a in _AXIS_ORDER if a not in (a1, a2))
@@ -70,6 +72,27 @@ def _uv_axes_for(major, fn, flip, ax_x, ax_y, ax_z, eps=0.0, opposite=False):
     return (-ax_y if (flip and hit) else ax_y), ax_z
 
 
+def _swap_cell_scale(obj, vertical):
+    """Swap width (X) and height (Z) of a controller / gizmo scale when the
+    texture direction switches between horizontal and vertical.
+
+    Y follows X when it did before (default controllers have Y == X) and is
+    kept as an independent value otherwise. The decision is remembered on the
+    object, so swapping back restores the original scale exactly; if the user
+    edited Y in between, it is decided again from the current values.
+    """
+    sx, sy, sz = obj.scale
+    last = obj.get("tc_y_last")
+    follows = obj.get("tc_y_follows_x")
+    if last is None or follows is None or abs(sy - last) > 1e-6:
+        follows = abs(sy - sx) < 1e-6
+    new_y = sz if follows else sy
+    obj.scale = (sz, new_y, sx)
+    obj["tc_y_follows_x"] = bool(follows)
+    obj["tc_y_last"] = float(new_y)
+    obj["tc_vertical"] = bool(vertical)
+
+
 def _cell_uv_rotate(u, v, rot):
     """Rotate the texture inside a tile cell by rot degrees (0/90/180/270).
     (u, v) are cell coordinates 0..1; returns the sampled texture coords."""
@@ -82,22 +105,26 @@ def _cell_uv_rotate(u, v, rot):
     return u, v
 
 
-def _priority_layers(s):
-    """Settings -> `layers` dict for _apply_tile_uvs / preview (None = legacy)."""
-    if not s.use_priority_axis:
+def _priority_layers(s, prefix=""):
+    """Settings -> `layers` dict for _apply_tile_uvs / preview (None = legacy).
+    `prefix` selects the settings set ("" Tile Grid, "uvw_" UVW Map)."""
+    def get(name):
+        return getattr(s, prefix + name)
+
+    if not get("use_priority_axis"):
         return None
     return {
-        'axes': _resolve_priority_axes(s),
-        'range1': _angle_range_tenths(s.priority_angle_from, s.priority_angle_to),
-        'range2': _angle_range_tenths(s.secondary_angle_from, s.secondary_angle_to),
-        'use2': s.use_secondary_axis,
-        'use3': s.use_remainder_axis,
-        'flip1': s.priority_flip_back,
-        'flip2': s.secondary_flip_back,
-        'flip3': s.remainder_flip_back,
-        'opp1': s.priority_flip_side == 'OPPOSITE',
-        'opp2': s.secondary_flip_side == 'OPPOSITE',
-        'opp3': s.remainder_flip_side == 'OPPOSITE',
+        'axes': _resolve_priority_axes(s, prefix),
+        'range1': _angle_range_tenths(get("priority_angle_from"), get("priority_angle_to")),
+        'range2': _angle_range_tenths(get("secondary_angle_from"), get("secondary_angle_to")),
+        'use2': get("use_secondary_axis"),
+        'use3': get("use_remainder_axis"),
+        'flip1': get("priority_flip_back"),
+        'flip2': get("secondary_flip_back"),
+        'flip3': get("remainder_flip_back"),
+        'opp1': get("priority_flip_side") == 'OPPOSITE',
+        'opp2': get("secondary_flip_side") == 'OPPOSITE',
+        'opp3': get("remainder_flip_side") == 'OPPOSITE',
     }
 
 

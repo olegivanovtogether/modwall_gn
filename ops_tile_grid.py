@@ -6,6 +6,7 @@ from mathutils import Vector
 from bpy.types import Operator
 from bpy.props import (
     IntProperty,
+    StringProperty,
 )
 from .bmesh_baker import get_tile_bounds, slice_mesh_with_grid
 from .uv_geom import _apply_tile_uvs, _priority_layers, _process_seams
@@ -263,9 +264,12 @@ class TC_OT_RotateTexture(Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     direction: IntProperty(default=1, min=-1, max=1)
+    prop: StringProperty(default="texture_rotation", options={'HIDDEN'})
 
     def execute(self, context):
         s = context.scene.tc_settings
-        idx = (int(s.texture_rotation) // 90 + self.direction) % 4
-        s.texture_rotation = str(idx * 90)
+        if self.prop not in ("texture_rotation", "uvw_texture_rotation"):
+            return {'CANCELLED'}
+        idx = (int(getattr(s, self.prop)) // 90 + self.direction) % 4
+        setattr(s, self.prop, str(idx * 90))
         return {'FINISHED'}

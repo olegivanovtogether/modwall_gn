@@ -4,6 +4,7 @@ import bpy
 import bmesh
 from bpy.types import Operator
 from .bmesh_baker import get_tile_bounds
+from .uv_geom import _priority_layers
 from .uvw import _apply_uvw_box_uv, _apply_uvw_cylinder_uv, _apply_uvw_planar_uv, _create_uvw_gizmo, _delete_uvw_gizmo
 
 
@@ -77,6 +78,8 @@ class TC_OT_ApplyUVWMap(Operator):
             _apply_uvw_box_uv(
                 bm, b_min, b_max, tile_u, tile_v, gizmo_local_mat,
                 s.uvw_flip_u, s.uvw_flip_v,
+                layers=_priority_layers(s, "uvw_"),
+                rotation=int(s.uvw_texture_rotation),
             )
         elif mapping == 'PLANAR':
             tile_u = max(abs(gizmo_scale.x), 0.001)
