@@ -8,12 +8,10 @@ This is a pre-release (test) build of the ModwallGN add-on for Blender.
    feedback to the author.
 2. You may not redistribute, publish, sell or sublicense this build, and you may
    not use it in commercial projects, without the written consent of the author.
-   This does not restrict viewing the public source repository on GitHub.
 3. This build is provided "as is", without warranty of any kind. You are
    responsible for your own files; please keep backups of your scenes.
 4. All rights remain with the author. This license applies to test builds only.
    It ends when a final release with its own license is published or when the
    author withdraws it in writing; after that you must stop using the test build
    and delete your copies (or use the final release under its own license).
-5. Feedback and bug reports may be sent through
-   https://github.com/olegivanovtogether/modwall_gn/issues
+5. Feedback and bug reports may be sent to the author.

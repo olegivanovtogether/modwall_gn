@@ -69,9 +69,7 @@ Quick helpers: enter / leave Vertex Paint, R / G / B / White / Black / custom co
 
 ## Reporting problems
 
-Open an issue: https://github.com/olegivanovtogether/modwall_gn/issues
-
-Please include:
+Send your feedback to the person who gave you this build. Please include:
 
 1. Blender version and the add-on version shown at the top of the panel (`ModwallGN v0.7.4`).
 2. Which tab and mode you used and the steps.

@@ -69,9 +69,30 @@ def check_tree():
             fail(f"{name} is missing")
 
 
+# Working material must never reach testers: links to the issue tracker or the
+# repository, names of work tools, internal ticket words.
+LEAK_PATTERN = re.compile(
+    r"github|olegivanov|issues?/|issue tracker|ticket|tracker|project board|codex|deepseek|todo",
+    re.IGNORECASE,
+)
+
+
+def check_leaks():
+    found = []
+    for name in RUNTIME_MODULES + DOC_FILES:
+        text = (ROOT / name).read_text(encoding="utf-8", errors="replace")
+        for match in LEAK_PATTERN.finditer(text):
+            line = text.count(chr(10), 0, match.start()) + 1
+            found.append(f"{name}:{line}: {match.group(0)}")
+    if found:
+        fail("working references found in release files:" + chr(10) + "  "
+             + (chr(10) + "  ").join(found))
+
+
 def main():
     version = read_version()
     check_tree()
+    check_leaks()
 
     out_dir = ROOT / "archive"
     out_dir.mkdir(exist_ok=True)

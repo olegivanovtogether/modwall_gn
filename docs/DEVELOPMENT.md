@@ -189,3 +189,12 @@ Everything runs in a background Blender (`blender -b --factory-startup`), never 
 - register / unregister / reload cycles, panels drawing for every tab and setting combination;
 - an older `.blend` must load with all settings intact;
 - risky changes get a Codex review before testing.
+
+## Detailed history (internal)
+
+- **0.7.4**: one layout for Tile Grid, Cylinder and UVW Map: Setup (inputs + `Select Controller`), module settings, Options / Apply with Apply always last.
+- **0.7.3**: priority layers: outside the ranges of layers 1 and 2 a face goes to the nearest axis; an exact tie (bevelled cube corner, 54.7 deg to all three axes) goes to the higher layer. Shared by Tile Grid and UVW Box.
+- **0.7.2**: UVW Box priority layers with its own `uvw_*` settings (on by default); reversible cell width/height swap; angle ranges refresh the previews.
+- **0.7.1**: Tile Grid `Select Controller`.
+- **0.7.0**: modules split out of `__init__.py`; tabs and plates; safe register / unregister / reload.
+- **0.6.14 and earlier**: layers, flip sides, texture direction, vertex paint, UVW Map, Cylinder Projection.
