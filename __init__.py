@@ -1,9 +1,9 @@
 bl_info = {
-    "name": "Simple Tile Cutter",
+    "name": "modwall_gn (Simple Tile Cutter)",
     "author": "Oleh Strykitchenko",
-    "version": (0, 6, 14),
+    "version": (0, 7, 0),
     "blender": (4, 5, 0),
-    "location": "View3D > Sidebar > Tile Cutter",
+    "location": "View3D > Sidebar > modwall_gn",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
     "category": "Mesh",
 }
@@ -60,11 +60,6 @@ classes = (
     ops_vertex_paint.TC_OT_ExitVertexPaintMode,
     ops_vertex_paint.TC_OT_FillVertexPaintColor,
     panels.TC_PT_Main,
-    panels.TC_PT_TileGrid,
-    panels.TC_PT_TileGridApply,
-    panels.TC_PT_CylinderProjection,
-    panels.TC_PT_UVWMapProjection,
-    panels.TC_PT_VertexPaintTools,
 )
 
 
@@ -94,6 +89,7 @@ def register():
                 pass
         bpy.utils.register_class(cls)
     bpy.types.Scene.tc_settings = PointerProperty(type=props.TC_Settings)
+    panels.register_tab_property()
     if _tc_load_post not in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.append(_tc_load_post)
     try:
@@ -105,6 +101,7 @@ def register():
 def unregister():
     if _tc_load_post in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_tc_load_post)
+    panels.unregister_tab_property()
     if hasattr(bpy.types.Scene, "tc_settings"):
         del bpy.types.Scene.tc_settings
     for cls in reversed(classes):

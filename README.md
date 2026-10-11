@@ -1,10 +1,12 @@
-# Simple Tile Cutter
+# modwall_gn
+
+*(formerly Simple Tile Cutter)*
 
 Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, reference-tile material transfer and vertex color painting helpers.
 
-- Version: `0.6.14` (alpha)
+- Version: `0.7.0` (alpha)
 - Blender: 4.5.0+
-- Location: `View3D > Sidebar > Tile Cutter`
+- Location: `View3D > Sidebar > modwall_gn`
 - Category: Mesh
 - Author: Oleh Strykitchenko
 
@@ -21,9 +23,9 @@ All plans, open work and bugs live on GitHub, not in this repository:
 
 ## Panels
 
-The sidebar has a parent panel `Tile Cutter` with four sub-panels.
+The sidebar tab `modwall_gn` has one panel with the add-on name and version on top, then a row of module tabs (they wrap onto a second row on a narrow panel): **Tile Grid**, **Cylinder**, **UVW Map**, **Vertex Paint**. The selected tab shows the controls of that module. The selected tab is UI state and is not saved with the file.
 
-### Tile Grid
+### Tile Grid (tab)
 
 Cuts the target mesh with a bisect grid, then assigns UVs from the reference tile.
 
@@ -68,7 +70,7 @@ Axes swap between layers: if you pick for layer 1 the axis that layer 2 uses, la
 
 Each layer is its own box in the panel with its enable checkbox next to the title. Layer 2 and 3 depend on the parent `Priority Axis` checkbox. With any of them off, faces near 45 degrees may project chaotically (the panel shows a warning). The Projection Box preview follows these settings, so the pattern direction on the preview cube changes when you toggle Flip or change axes.
 
-### Cylinder Projection
+### Cylinder (tab)
 
 Projects a tile texture onto cylindrical meshes and can cut the mesh into height bands and angular sectors. A Cylinder Control empty defines the projection frame.
 
@@ -84,7 +86,7 @@ Options:
 - `Duplicate Before Apply` (default on).
 - `Select Cylinder Control`
 
-### UVW Map Projection
+### UVW Map (tab)
 
 Projects UVs without cutting the mesh. Classic UVW-style projection from a viewport gizmo; the topology stays unchanged.
 
@@ -109,7 +111,7 @@ Workflow:
 9. Keep `Copy Material From Reference` enabled (default) to give the result the reference material.
 10. Click `Apply UVW Map`.
 
-### Vertex Paint Tools
+### Vertex Paint (tab)
 
 Helper panel for painting vertex colors on the active mesh without leaving the sidebar.
 
@@ -137,8 +139,20 @@ See the issue tracker for the current state of each item.
 
 ## Repository layout
 
-- `__init__.py`: addon (settings, operators, panels, registration).
+The package is split by responsibility; a module only imports modules listed above it.
+
+- `__init__.py`: `bl_info`, module list with reload, class list, `register` / `unregister`.
 - `bmesh_baker.py`: grid slicing and reference-tile UV bounds helpers.
+- `uv_geom.py`: pure UV geometry: priority layers, axis choice, flip rules, cell rotation, seams.
+- `preview_mat.py`: materials for the preview objects.
+- `vertex_paint.py`: Vertex Paint helper functions.
+- `tile_grid.py`: Projection Box, Tile Grid preview, texture direction callbacks.
+- `cylinder.py`: Cylinder Projection (cuts, control empty, preview).
+- `uvw.py`: UVW Map Projection (gizmo, previews, UV projection).
+- `callbacks.py`: small property update callbacks and poll functions.
+- `props.py`: `TC_Settings` with every add-on property (`scene.tc_settings`).
+- `ops_tile_grid.py`, `ops_cylinder.py`, `ops_uvw.py`, `ops_vertex_paint.py`: operators per module.
+- `panels.py`: the N-panel with the tab row.
 - `test_tile_cutter.py`: manual smoke script for the Blender Text Editor (outdated, see tracker).
 - `archive/`: local release zips, not tracked by git.
 
