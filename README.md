@@ -2,7 +2,7 @@
 
 Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, reference-tile material transfer and vertex color painting helpers.
 
-- Version: `0.6.11` (alpha)
+- Version: `0.6.12` (alpha)
 - Blender: 4.5.0+
 - Location: `View3D > Sidebar > Tile Cutter`
 - Category: Mesh
@@ -38,6 +38,14 @@ Options:
 - `Mark Seams`: seams on tile borders, sharp corners and boundary edges. `Corner Angle` sets the sharpness threshold.
 - `Dissolve non-seamed edges`: removes edges without a seam. Only active when `Mark Seams` is on.
 
+#### Texture direction (Tile Grid)
+
+The tile layout is read as stored by default (`0° · Horizontal`). If the texture image is stored turned on its side, rotate the reading in 90 degree steps so the wall comes out laid the usual way:
+
+- `0° · Horizontal`, `90° · Vertical`, `180° · Horizontal, upside down`, `270° · Vertical, upside down`.
+- `-90°` / `+90°` buttons step through the four positions.
+- At 90° and 270° the cell width and height are swapped (matters only for rectangular tiles). The Projection Box and its preview follow.
+
 #### Priority layers (Tile Grid)
 
 Faces whose normal sits near 45 degrees between two Projection Box axes used to flip between axes face by face. The priority layers make the choice deterministic. Each face goes to the first layer that matches:
@@ -48,7 +56,7 @@ Faces whose normal sits near 45 degrees between two Projection Box axes used to 
 
 Each layer has **Flip Back Faces**: the faces of that layer that look away from the axis are turned over (U mirrored), like gluing the paper on its other side. Off = straight-through projection. Defaults: layer 1 off, layers 2 and 3 on.
 
-Layer 2 and 3 depend on the parent `Priority Axis` checkbox. With any of them off, faces near 45 degrees may project chaotically (the panel shows a warning). The Projection Box preview follows these settings, so the pattern direction on the preview cube changes when you toggle Flip or change axes.
+Each layer is its own sub-panel with its enable checkbox in the header. Layer 2 and 3 depend on the parent `Priority Axis` checkbox. With any of them off, faces near 45 degrees may project chaotically (the panel shows a warning). The Projection Box preview follows these settings, so the pattern direction on the preview cube changes when you toggle Flip or change axes.
 
 ### Cylinder Projection
 

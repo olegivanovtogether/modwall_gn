@@ -1,7 +1,7 @@
 bl_info = {
     "name": "Simple Tile Cutter",
     "author": "Oleh Strykitchenko",
-    "version": (0, 6, 11),
+    "version": (0, 6, 12),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > Tile Cutter",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -79,6 +79,18 @@ def _uv_axes_for(major, fn, flip, ax_x, ax_y, ax_z, eps=0.0):
     return ua, ax_z
 
 
+def _cell_uv_rotate(u, v, rot):
+    """Rotate the texture inside a tile cell by rot degrees (0/90/180/270).
+    (u, v) are cell coordinates 0..1; returns the sampled texture coords."""
+    if rot == 90:
+        return v, 1.0 - u
+    if rot == 180:
+        return 1.0 - u, 1.0 - v
+    if rot == 270:
+        return 1.0 - v, u
+    return u, v
+
+
 def _priority_layers(s):
     """Settings -> `layers` dict for _apply_tile_uvs / preview (None = legacy)."""
     if not s.use_priority_axis:
@@ -131,8 +143,10 @@ def _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z):
 
 def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
                     box_origin, ax_x, ax_y, ax_z,
-                    layers=None):
-    """layers=None: legacy rule (axis with the largest normal component,
+                    layers=None, rotation=0):
+    """rotation: texture direction inside the cell, 0/90/180/270 degrees.
+
+    layers=None: legacy rule (axis with the largest normal component,
     ties Y > Z > X; X/Y faces flip as before, Z never flips).
 
     layers (dict) enables the priority layers:
@@ -178,6 +192,7 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
             pv = p.dot(va)
             uf = max(0.0, min(1.0, (pu - (cu - 0.5) * tile_u) / tile_u))
             vf = max(0.0, min(1.0, (pv - (cv - 0.5) * tile_v) / tile_v))
+            uf, vf = _cell_uv_rotate(uf, vf, rotation)
             loop[uv_layer].uv = (b_min[0] + uf * (b_max[0] - b_min[0]),
                                  b_min[1] + vf * (b_max[1] - b_min[1]))
 
@@ -239,7 +254,14 @@ def _tile_size_from_settings(s):
 
 def _set_proj_box_to_tile_size(box, s):
     ts_x, ts_y = _tile_size_from_settings(s)
-    box.scale = (ts_x, ts_x, ts_y)
+    vertical = int(s.texture_rotation) in (90, 270)
+    if vertical:
+        # texture is stored turned by 90 degrees: the cell on the wall is
+        # tile height wide and tile width tall
+        box.scale = (ts_y, ts_y, ts_x)
+    else:
+        box.scale = (ts_x, ts_x, ts_y)
+    box["tc_vertical"] = vertical
 
 
 def _make_material_transparent(mat, alpha=0.55):
@@ -1169,6 +1191,7 @@ def _create_tile_preview(context, s):
         )
 
     layers = _priority_layers(s)
+    rotation = int(s.texture_rotation)
     box_axes = (Vector((1.0, 0.0, 0.0)), Vector((0.0, 1.0, 0.0)), Vector((0.0, 0.0, 1.0)))
     face_normals = {
         "bottom": Vector((0.0, 0.0, -1.0)),
@@ -1185,7 +1208,8 @@ def _create_tile_preview(context, s):
         fn = face_normals[mode]
         major, flip, eps = _choose_axis_and_flip(fn, layers, *box_axes)
         ua, va = _uv_axes_for(major, fn, flip, *box_axes, eps)
-        return remap_uv(co.dot(ua) + 0.5, co.dot(va) + 0.5)
+        u, v = _cell_uv_rotate(co.dot(ua) + 0.5, co.dot(va) + 0.5, rotation)
+        return remap_uv(u, v)
 
     for poly, mode in zip(mesh.polygons, face_modes):
         for loop_index in poly.loop_indices:
@@ -1285,6 +1309,21 @@ def _poll_mesh(self, obj):
     return obj.type == 'MESH'
 
 
+def _on_texture_rotation(self, context):
+    """Switching between horizontal and vertical swaps the cell width/height
+    of the existing Projection Box; then the preview is rebuilt."""
+    s = context.scene.tc_settings
+    box = s.proj_box
+    if box is not None:
+        vertical = int(s.texture_rotation) in (90, 270)
+        if bool(box.get("tc_vertical", False)) != vertical:
+            sx, sy, sz = box.scale
+            new_y = sz if abs(sy - sx) < 1e-6 else sy
+            box.scale = (sz, new_y, sx)
+            box["tc_vertical"] = vertical
+    _refresh_tile_preview(self, context)
+
+
 def _refresh_tile_preview(self, context):
     s = context.scene.tc_settings
     if s.proj_box is not None and s.reference_tile is not None:
@@ -1377,6 +1416,18 @@ class TC_Settings(PropertyGroup):
         name="Duplicate Before Apply",
         description="Work on a copy; original mesh is left untouched",
         default=True,
+    )
+    texture_rotation: EnumProperty(
+        name="Texture direction",
+        description="How the texture is read: rotate the whole tile layout in 90 degree steps (use Vertical when the texture image is stored turned on its side)",
+        items=[
+            ('0',   "0° · Horizontal", "Texture is read as stored"),
+            ('90',  "90° · Vertical", "Texture turned by 90 degrees; cell width and height are swapped"),
+            ('180', "180° · Horizontal, upside down", "Texture turned by 180 degrees"),
+            ('270', "270° · Vertical, upside down", "Texture turned by 270 degrees; cell width and height are swapped"),
+        ],
+        default='0',
+        update=_on_texture_rotation,
     )
     use_priority_axis: BoolProperty(
         name="Priority Axis",
@@ -1712,6 +1763,10 @@ class TC_OT_Apply(Operator):
             tile_u     = max(abs(scl.x), 0.001)
             tile_v     = max(abs(scl.z), 0.001)
 
+        rotation = int(s.texture_rotation)
+        if (box is None or box.type != 'EMPTY') and rotation in (90, 270):
+            tile_u, tile_v = tile_v, tile_u
+
         # ── Duplicate or work in-place ────────────────────────────────────────
         if s.duplicate_before_apply:
             new_data = target.data.copy()
@@ -1744,6 +1799,7 @@ class TC_OT_Apply(Operator):
             tile_u, tile_v,
             box_origin, ax_x, ax_y, ax_z,
             layers=layers,
+            rotation=rotation,
         )
 
         if s.mark_seams:
@@ -1812,6 +1868,21 @@ class TC_OT_ResetProjBox(Operator):
             _create_tile_preview(context, s)
 
         self.report({'INFO'}, "Projection Box reset")
+        return {'FINISHED'}
+
+
+class TC_OT_RotateTexture(Operator):
+    bl_idname = "tilecutter.rotate_texture"
+    bl_label = "Rotate Texture"
+    bl_description = "Step the texture direction by 90 degrees"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    direction: IntProperty(default=1, min=-1, max=1)
+
+    def execute(self, context):
+        s = context.scene.tc_settings
+        idx = (int(s.texture_rotation) // 90 + self.direction) % 4
+        s.texture_rotation = str(idx * 90)
         return {'FINISHED'}
 
 
@@ -2398,7 +2469,7 @@ class TC_PT_Main(Panel):
         layout = self.layout
 
         info = layout.column(align=True)
-        info.label(text="v0.6.11")
+        info.label(text="v0.6.12")
         info.label(text="Alpha mobile-game tiling tool.", icon='INFO')
         info.label(text="Use a flat, lying reference tile plane.")
         info.label(text="Rectangular tiles work; square tiles are safer.")
@@ -2428,54 +2499,130 @@ class TC_PT_TileGrid(Panel):
                             text="Reset Proj Box", icon='LOOP_BACK')
 
         layout.separator()
+        layout.label(text="Texture direction")
+        row = layout.row(align=True)
+        left = row.operator("tilecutter.rotate_texture", text="", icon='LOOP_BACK')
+        left.direction = -1
+        row.prop(s, "texture_rotation", text="")
+        right = row.operator("tilecutter.rotate_texture", text="", icon='LOOP_FORWARDS')
+        right.direction = 1
+
+        layout.separator()
         layout.prop(s, "use_priority_axis")
         if not s.use_priority_axis:
             layout.label(text="Off: faces near 45 deg may project chaotically",
                          icon='ERROR')
-        a1, a2, a3 = _resolve_priority_axes(s)
-        on1 = s.use_priority_axis
-        on2 = on1 and s.use_secondary_axis
-        on3 = on2 and s.use_remainder_axis
 
-        col = layout.column()
-        col.enabled = on1
 
-        box1 = col.box()
-        box1.label(text=f"Layer 1: axis {a1}")
-        box1.prop(s, "priority_axis", expand=True)
-        row = box1.row(align=True)
+class TC_PT_TileGridLayer1(Panel):
+    bl_label = "Layer 1"
+    bl_idname = "TC_PT_TILE_GRID_LAYER1"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Tile Cutter'
+    bl_parent_id = "TC_PT_TILE_GRID"
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.tc_settings.use_priority_axis
+
+    def draw_header(self, context):
+        a1, a2, a3 = _resolve_priority_axes(context.scene.tc_settings)
+        self.layout.label(text=f"· axis {a1}")
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.tc_settings
+        layout.prop(s, "priority_axis", expand=True)
+        row = layout.row(align=True)
         row.prop(s, "priority_angle_from")
         row.prop(s, "priority_angle_to")
-        box1.prop(s, "priority_flip_back")
+        layout.prop(s, "priority_flip_back")
 
-        box2 = col.box()
-        box2.prop(s, "use_secondary_axis", text=f"Layer 2: axis {a2}")
-        if on1 and not s.use_secondary_axis:
-            box2.label(text="Off: faces near 45 deg may project chaotically",
-                       icon='ERROR')
-        col2 = box2.column(align=True)
-        col2.enabled = on2
-        row = col2.row(align=True)
+
+class TC_PT_TileGridLayer2(Panel):
+    bl_label = "Layer 2"
+    bl_idname = "TC_PT_TILE_GRID_LAYER2"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Tile Cutter'
+    bl_parent_id = "TC_PT_TILE_GRID"
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.tc_settings.use_priority_axis
+
+    def draw_header(self, context):
+        s = context.scene.tc_settings
+        a1, a2, a3 = _resolve_priority_axes(s)
+        row = self.layout.row(align=True)
+        row.prop(s, "use_secondary_axis", text="")
+        row.label(text=f"· axis {a2}")
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.tc_settings
+        a1, a2, a3 = _resolve_priority_axes(s)
+        if not s.use_secondary_axis:
+            layout.label(text="Off: faces near 45 deg may project chaotically",
+                         icon='ERROR')
+        col = layout.column()
+        col.enabled = s.use_secondary_axis
+        row = col.row(align=True)
         for ax in _AXIS_ORDER:
             if ax != a1:
                 row.prop_enum(s, "secondary_axis", ax)
-        row = col2.row(align=True)
+        row = col.row(align=True)
         row.prop(s, "secondary_angle_from")
         row.prop(s, "secondary_angle_to")
-        col2.prop(s, "secondary_flip_back")
+        col.prop(s, "secondary_flip_back")
 
-        box3 = col.box()
-        row3 = box3.row()
-        row3.enabled = on2
-        row3.prop(s, "use_remainder_axis", text=f"Layer 3: remaining axis {a3}")
-        if on2 and not s.use_remainder_axis:
-            box3.label(text="Off: nearest-axis rule, may be chaotic near 45 deg",
-                       icon='ERROR')
-        col3 = box3.column()
-        col3.enabled = on3
-        col3.prop(s, "remainder_flip_back")
 
-        layout.separator()
+class TC_PT_TileGridLayer3(Panel):
+    bl_label = "Layer 3"
+    bl_idname = "TC_PT_TILE_GRID_LAYER3"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Tile Cutter'
+    bl_parent_id = "TC_PT_TILE_GRID"
+
+    @classmethod
+    def poll(cls, context):
+        return context.scene.tc_settings.use_priority_axis
+
+    def draw_header(self, context):
+        s = context.scene.tc_settings
+        a1, a2, a3 = _resolve_priority_axes(s)
+        row = self.layout.row(align=True)
+        row.enabled = s.use_secondary_axis
+        row.prop(s, "use_remainder_axis", text="")
+        row.label(text=f"· remaining axis {a3}")
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.tc_settings
+        if not s.use_secondary_axis:
+            layout.label(text="Needs Layer 2", icon='INFO')
+        elif not s.use_remainder_axis:
+            layout.label(text="Off: nearest-axis rule, may be chaotic near 45 deg",
+                         icon='ERROR')
+        col = layout.column()
+        col.enabled = s.use_secondary_axis and s.use_remainder_axis
+        col.prop(s, "remainder_flip_back")
+
+
+class TC_PT_TileGridApply(Panel):
+    bl_label = "Seams / Apply"
+    bl_idname = "TC_PT_TILE_GRID_APPLY"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'Tile Cutter'
+    bl_parent_id = "TC_PT_TILE_GRID"
+
+    def draw(self, context):
+        layout = self.layout
+        s = context.scene.tc_settings
+
         layout.prop(s, "mark_seams")
         seam_col = layout.column(align=True)
         seam_col.enabled = s.mark_seams
@@ -2619,6 +2766,7 @@ classes = (
     TC_Settings,
     TC_OT_Apply,
     TC_OT_ResetProjBox,
+    TC_OT_RotateTexture,
     TC_OT_SelectCylinderControl,
     TC_OT_ApplyCylinder,
     TC_OT_SelectUVWGizmo,
@@ -2630,6 +2778,10 @@ classes = (
     TC_OT_FillVertexPaintColor,
     TC_PT_Main,
     TC_PT_TileGrid,
+    TC_PT_TileGridLayer1,
+    TC_PT_TileGridLayer2,
+    TC_PT_TileGridLayer3,
+    TC_PT_TileGridApply,
     TC_PT_CylinderProjection,
     TC_PT_UVWMapProjection,
     TC_PT_VertexPaintTools,
