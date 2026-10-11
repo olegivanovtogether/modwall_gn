@@ -11,8 +11,8 @@ from .cylinder import _create_cylinder_control, _cyl_axis_idx, _cyl_decompose, _
 
 class TC_OT_SelectCylinderControl(Operator):
     bl_idname = "tilecutter.select_cylinder_control"
-    bl_label = "Select Cylinder Control"
-    bl_description = "Select the Cylinder Control empty for move / rotate / scale"
+    bl_label = "Select Controller"
+    bl_description = "Select the controller (Cylinder Control empty) to move / rotate / scale it, creating it first if it does not exist"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod

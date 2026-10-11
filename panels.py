@@ -41,32 +41,127 @@ def _addon_version():
     return "?"
 
 
-def _draw_tile_setup(layout, context):
-    """Tile Grid, setup plate: inputs, Projection Box and texture direction."""
-    s = context.scene.tc_settings
+# ── Shared blocks: every module tab uses the same order ──────────────────────
+#
+#   Setup          inputs (Target, Reference Tile) + Controller
+#   <settings>     module specific plate(s)
+#   Options/Apply  options of the module, then the Apply button (always last)
 
-    layout.prop(s, "target_object", icon='MESH_DATA')
-    layout.prop(s, "reference_tile", icon='UV')
+def _draw_inputs(layout, s, target_prop, reference_prop):
+    layout.prop(s, target_prop, icon='MESH_DATA')
+    layout.prop(s, reference_prop, icon='UV')
 
-    layout.prop(s, "duplicate_before_apply")
 
-    if s.target_object is not None and s.reference_tile is not None:
-        layout.separator()
-        layout.label(text="Controller: move / scale / rotate it")
-        col = layout.column(align=True)
-        col.operator("tilecutter.select_controller",
-                     text="Select Controller", icon='EMPTY_ARROWS')
-        col.operator("tilecutter.reset_proj_box",
-                     text="Reset Proj Box", icon='LOOP_BACK')
-
+def _draw_controller(layout, select_idname, extra=None):
+    """The controller block, identical in every module. `extra` is an optional
+    (operator id, text, icon) shown under the Select button."""
     layout.separator()
+    layout.label(text="Controller: move / scale / rotate it")
+    col = layout.column(align=True)
+    col.operator(select_idname, text="Select Controller", icon='EMPTY_ARROWS')
+    if extra is not None:
+        idname, text, icon = extra
+        col.operator(idname, text=text, icon=icon)
+
+
+def _draw_apply_button(layout, idname, icon):
+    layout.separator()
+    row = layout.row()
+    row.scale_y = 1.4
+    row.operator(idname, icon=icon)
+
+
+# ── Setup plate (all three modules) ──────────────────────────────────────────
+
+def _draw_setup(layout, context, tab):
+    s = context.scene.tc_settings
+    if tab == 'TILE_GRID':
+        _draw_inputs(layout, s, "target_object", "reference_tile")
+        _draw_controller(layout, "tilecutter.select_controller",
+                         ("tilecutter.reset_proj_box", "Reset Proj Box", 'LOOP_BACK'))
+    elif tab == 'CYLINDER':
+        _draw_inputs(layout, s, "cylinder_target", "cylinder_reference_tile")
+        _draw_controller(layout, "tilecutter.select_cylinder_control")
+    elif tab == 'UVW':
+        _draw_inputs(layout, s, "uvw_target", "uvw_reference_tile")
+        _draw_controller(layout, "tilecutter.select_uvw_gizmo")
+
+
+# ── Settings plates (module specific) ────────────────────────────────────────
+
+def _draw_texture_direction(layout, s, prop):
     layout.label(text="Texture direction")
     row = layout.row(align=True)
     left = row.operator("tilecutter.rotate_texture", text="", icon='LOOP_BACK')
     left.direction = -1
-    row.prop(s, "texture_rotation", text="")
+    left.prop = prop
+    row.prop(s, prop, text="")
     right = row.operator("tilecutter.rotate_texture", text="", icon='LOOP_FORWARDS')
     right.direction = 1
+    right.prop = prop
+
+
+def _draw_tile_settings(layout, context):
+    """Tile Grid settings plate: texture direction and priority layers."""
+    s = context.scene.tc_settings
+    _draw_texture_direction(layout, s, "texture_rotation")
+    layout.separator()
+    _draw_priority_layers(layout, s, "")
+
+
+def _draw_cylinder_settings(layout, context):
+    """Cylinder settings plate."""
+    s = context.scene.tc_settings
+    col = layout.column(align=True)
+    col.prop(s, "cylinder_axis")
+    col.prop(s, "cylinder_tiles_around")
+    col.prop(s, "cylinder_stretch_around")
+    col.prop(s, "cylinder_tile_height_source")
+    height_row = col.row(align=True)
+    height_row.enabled = s.cylinder_tile_height_source == 'MANUAL'
+    height_row.prop(s, "cylinder_tile_height")
+    col.prop(s, "cylinder_cut_height_bands")
+    layout.prop(s, "cylinder_project_caps")
+
+
+def _draw_uvw_settings(layout, context):
+    """UVW Map settings plate: mapping type and global U / V flip."""
+    s = context.scene.tc_settings
+    layout.prop(s, "uvw_mapping_type")
+    if s.uvw_mapping_type == 'CYLINDER':
+        layout.prop(s, "uvw_cylinder_tiles_around")
+    row = layout.row(align=True)
+    row.prop(s, "uvw_flip_u", toggle=True)
+    row.prop(s, "uvw_flip_v", toggle=True)
+
+
+def _draw_uvw_layers(layout, context):
+    """UVW Map (Box): texture direction and priority layers."""
+    s = context.scene.tc_settings
+    _draw_texture_direction(layout, s, "uvw_texture_rotation")
+    layout.separator()
+    _draw_priority_layers(layout, s, "uvw_")
+
+
+# ── Options / Apply plate (all three modules, Apply always last) ──────────────
+
+def _draw_options_apply(layout, context, tab):
+    s = context.scene.tc_settings
+    if tab == 'TILE_GRID':
+        layout.prop(s, "duplicate_before_apply")
+        layout.prop(s, "mark_seams")
+        seam_col = layout.column(align=True)
+        seam_col.enabled = s.mark_seams
+        seam_col.prop(s, "dissolve_non_seamed_edges")
+        seam_col.prop(s, "seam_angle", text="Corner Angle (deg)")
+        _draw_apply_button(layout, "tilecutter.apply", 'MESH_GRID')
+    elif tab == 'CYLINDER':
+        layout.prop(s, "cylinder_duplicate_before_apply")
+        _draw_apply_button(layout, "tilecutter.apply_cylinder", 'MESH_CYLINDER')
+    elif tab == 'UVW':
+        layout.prop(s, "uvw_duplicate_before_apply")
+        layout.prop(s, "uvw_copy_material")
+        _draw_apply_button(layout, "tilecutter.apply_uvw_map", 'MOD_UVPROJECT')
 
 
 def _draw_priority_layers(layout, s, prefix=""):
@@ -137,102 +232,6 @@ def _draw_priority_layers(layout, s, prefix=""):
                     and getattr(s, prefix + "use_remainder_axis"))
     col3.prop(s, prefix + "remainder_flip_back")
     side_row(col3, prefix + "remainder_flip_side", 3, a3, getattr(s, prefix + "remainder_flip_back"))
-
-
-
-
-def _draw_tile_layers(layout, context):
-    """Tile Grid, layers plate: priority axis and the three layers."""
-    _draw_priority_layers(layout, context.scene.tc_settings, "")
-
-
-def _draw_uvw_layers(layout, context):
-    """UVW Map (Box), layers plate: texture direction and priority layers."""
-    s = context.scene.tc_settings
-    layout.label(text="Texture direction")
-    row = layout.row(align=True)
-    left = row.operator("tilecutter.rotate_texture", text="", icon='LOOP_BACK')
-    left.direction = -1
-    left.prop = "uvw_texture_rotation"
-    row.prop(s, "uvw_texture_rotation", text="")
-    right = row.operator("tilecutter.rotate_texture", text="", icon='LOOP_FORWARDS')
-    right.direction = 1
-    right.prop = "uvw_texture_rotation"
-    layout.separator()
-    _draw_priority_layers(layout, s, "uvw_")
-
-
-def _draw_tile_grid_apply(layout, context):
-    """Tile Grid tab, bottom: seams and the Apply button."""
-    s = context.scene.tc_settings
-
-    layout.prop(s, "mark_seams")
-    seam_col = layout.column(align=True)
-    seam_col.enabled = s.mark_seams
-    seam_col.prop(s, "dissolve_non_seamed_edges")
-    seam_col.prop(s, "seam_angle", text="Corner Angle (deg)")
-
-    layout.separator()
-    row = layout.row()
-    row.scale_y = 1.4
-    row.operator("tilecutter.apply", icon='MESH_GRID')
-
-
-def _draw_cylinder(layout, context):
-    """Cylinder tab."""
-    s = context.scene.tc_settings
-
-    layout.prop(s, "cylinder_target", icon='MESH_DATA')
-    layout.prop(s, "cylinder_reference_tile", icon='UV')
-
-    col = layout.column(align=True)
-    col.prop(s, "cylinder_axis")
-    col.prop(s, "cylinder_tiles_around")
-    col.prop(s, "cylinder_stretch_around")
-    col.prop(s, "cylinder_tile_height_source")
-    height_row = col.row(align=True)
-    height_row.enabled = s.cylinder_tile_height_source == 'MANUAL'
-    height_row.prop(s, "cylinder_tile_height")
-    col.prop(s, "cylinder_cut_height_bands")
-
-    if s.cylinder_control is not None:
-        layout.label(text="Cylinder Control: move / rotate / scale it")
-        layout.operator("tilecutter.select_cylinder_control",
-                        text="Select Cylinder Control", icon='EMPTY_ARROWS')
-
-    layout.prop(s, "cylinder_project_caps")
-    layout.prop(s, "cylinder_duplicate_before_apply")
-
-    row = layout.row()
-    row.scale_y = 1.4
-    row.operator("tilecutter.apply_cylinder", icon='MESH_CYLINDER')
-
-
-def _draw_uvw(layout, context):
-    """UVW Map tab."""
-    s = context.scene.tc_settings
-
-    layout.prop(s, "uvw_target", icon='MESH_DATA')
-    layout.prop(s, "uvw_reference_tile", icon='UV')
-    layout.prop(s, "uvw_mapping_type")
-    if s.uvw_mapping_type == 'CYLINDER':
-        layout.prop(s, "uvw_cylinder_tiles_around")
-
-    row = layout.row(align=True)
-    row.prop(s, "uvw_flip_u", toggle=True)
-    row.prop(s, "uvw_flip_v", toggle=True)
-
-    layout.prop(s, "uvw_duplicate_before_apply")
-    layout.prop(s, "uvw_copy_material")
-
-    if s.uvw_gizmo is not None:
-        layout.label(text="UVW Gizmo: move / rotate / scale it")
-    layout.operator("tilecutter.select_uvw_gizmo",
-                    text="Select / Create UVW Gizmo", icon='EMPTY_ARROWS')
-
-    row = layout.row()
-    row.scale_y = 1.4
-    row.operator("tilecutter.apply_uvw_map", icon='MOD_UVPROJECT')
 
 
 def _draw_vertex_paint(layout, context):
@@ -329,8 +328,8 @@ class TC_PT_Main(Panel):
                 flow.prop_enum(wm, "modwall_gn_tab", ident, text=label)
 
 
-def _tab_is(context, tab):
-    return context.window_manager.modwall_gn_tab == tab
+def _tab_is(context, *tabs):
+    return context.window_manager.modwall_gn_tab in tabs
 
 
 class _TabPlate:
@@ -341,20 +340,23 @@ class _TabPlate:
     bl_parent_id = "TC_PT_MAIN"
 
 
-class TC_PT_TileSetup(_TabPlate, Panel):
+_CUT_TABS = ('TILE_GRID', 'CYLINDER', 'UVW')
+
+
+class TC_PT_Setup(_TabPlate, Panel):
     bl_label = "Setup"
-    bl_idname = "TC_PT_TILE_SETUP"
+    bl_idname = "TC_PT_SETUP"
 
     @classmethod
     def poll(cls, context):
-        return _tab_is(context, 'TILE_GRID')
+        return _tab_is(context, *_CUT_TABS)
 
     def draw(self, context):
-        _draw_tile_setup(self.layout, context)
+        _draw_setup(self.layout, context, context.window_manager.modwall_gn_tab)
 
 
 class TC_PT_TileLayers(_TabPlate, Panel):
-    bl_label = "Priority layers"
+    bl_label = "Texture direction & priority layers"
     bl_idname = "TC_PT_TILE_LAYERS"
 
     @classmethod
@@ -362,23 +364,11 @@ class TC_PT_TileLayers(_TabPlate, Panel):
         return _tab_is(context, 'TILE_GRID')
 
     def draw(self, context):
-        _draw_tile_layers(self.layout, context)
-
-
-class TC_PT_TileApply(_TabPlate, Panel):
-    bl_label = "Seams / Apply"
-    bl_idname = "TC_PT_TILE_APPLY"
-
-    @classmethod
-    def poll(cls, context):
-        return _tab_is(context, 'TILE_GRID')
-
-    def draw(self, context):
-        _draw_tile_grid_apply(self.layout, context)
+        _draw_tile_settings(self.layout, context)
 
 
 class TC_PT_CylinderTab(_TabPlate, Panel):
-    bl_label = "Cylinder Projection"
+    bl_label = "Cylinder settings"
     bl_idname = "TC_PT_CYLINDER_TAB"
 
     @classmethod
@@ -386,11 +376,11 @@ class TC_PT_CylinderTab(_TabPlate, Panel):
         return _tab_is(context, 'CYLINDER')
 
     def draw(self, context):
-        _draw_cylinder(self.layout, context)
+        _draw_cylinder_settings(self.layout, context)
 
 
 class TC_PT_UVWTab(_TabPlate, Panel):
-    bl_label = "UVW Map Projection"
+    bl_label = "UVW settings"
     bl_idname = "TC_PT_UVW_TAB"
 
     @classmethod
@@ -398,11 +388,11 @@ class TC_PT_UVWTab(_TabPlate, Panel):
         return _tab_is(context, 'UVW')
 
     def draw(self, context):
-        _draw_uvw(self.layout, context)
+        _draw_uvw_settings(self.layout, context)
 
 
 class TC_PT_UVWLayers(_TabPlate, Panel):
-    bl_label = "Priority layers (Box)"
+    bl_label = "Texture direction & priority layers (Box)"
     bl_idname = "TC_PT_UVW_LAYERS"
 
     @classmethod
@@ -412,6 +402,18 @@ class TC_PT_UVWLayers(_TabPlate, Panel):
 
     def draw(self, context):
         _draw_uvw_layers(self.layout, context)
+
+
+class TC_PT_Apply(_TabPlate, Panel):
+    bl_label = "Options / Apply"
+    bl_idname = "TC_PT_APPLY"
+
+    @classmethod
+    def poll(cls, context):
+        return _tab_is(context, *_CUT_TABS)
+
+    def draw(self, context):
+        _draw_options_apply(self.layout, context, context.window_manager.modwall_gn_tab)
 
 
 class TC_PT_VertexPaintTab(_TabPlate, Panel):

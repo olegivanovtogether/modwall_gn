@@ -4,7 +4,7 @@
 
 Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, reference-tile material transfer and vertex color painting helpers.
 
-- Version: `0.7.3` (alpha)
+- Version: `0.7.4` (alpha)
 - Blender: 4.5.0+
 - Location: `View3D > Sidebar > ModwallGN`
 - Category: Mesh
@@ -23,7 +23,7 @@ All plans, open work and bugs live on GitHub, not in this repository:
 
 ## Panels
 
-The sidebar tab `ModwallGN` has one panel with the add-on name and version on top, then a bar of module tabs (one row; two rows of two when the panel is narrow): **Tile Grid**, **Cylinder**, **UVW Map**, **Vertex Paint**. The selected tab shows the controls of that module, each group on its own plate (sub-panel): for Tile Grid these are Setup, Priority layers and Seams / Apply. The selected tab is UI state and is not saved with the file.
+The sidebar tab `ModwallGN` has one panel with the add-on name and version on top, then a bar of module tabs (one row; two rows of two when the panel is narrow): **Tile Grid**, **Cylinder**, **UVW Map**, **Vertex Paint**. The selected tab shows the controls of that module, each group on its own plate (sub-panel). The three cutting / projecting modules share one layout: **Setup** (Target, Reference Tile and the **Controller** block with `Select Controller`), the module's settings, then **Options / Apply** with the Apply button always last. The selected tab is UI state and is not saved with the file.
 
 ### Tile Grid (tab)
 
@@ -87,7 +87,7 @@ Options:
 - `Cut Height Bands` (default on).
 - `Project Caps` (default on): cuts cap faces into a grid and applies planar UVs.
 - `Duplicate Before Apply` (default on).
-- `Select Cylinder Control`
+- `Select Controller`: selects the Cylinder Control empty, even when it sits inside the mesh
 
 ### UVW Map (tab)
 
@@ -106,7 +106,7 @@ Workflow:
 1. Pick `Target Mesh`.
 2. Pick a flat, lying `Reference Tile`.
 3. Choose `Box`, `Planar`, or `Cylinder`.
-4. Use `Select / Create UVW Gizmo`.
+4. Use `Select Controller` (creates the UVW Gizmo if needed).
 5. Move, rotate or scale the UVW Gizmo in the viewport.
 6. Set `Tiles Around` for UVW Cylinder if needed.
 7. Toggle `U Flip` / `V Flip` if the texture direction is wrong.
@@ -139,6 +139,7 @@ See the issue tracker for the current state of each item.
 
 ## Changelog
 
+- **0.7.4**: one layout for Tile Grid, Cylinder and UVW Map: Setup (inputs + `Select Controller`), module settings, Options / Apply with Apply always last; the controller button has the same name and place in every module.
 - **0.7.3**: priority layers fixed for faces between the axes: outside the ranges of layers 1 and 2 a face goes to the nearest axis and an exact tie (e.g. a bevelled cube corner, 54.7 deg to all three axes) goes to the higher layer instead of the lowest one. Applies to Tile Grid and UVW Box.
 - **0.7.2**: UVW Map (Box) gets the same priority layers, Flip Back Faces with side and texture direction as Tile Grid (own `uvw_*` settings, on by default), live gizmo preview follows them; reversible cell width/height swap; angle ranges refresh the previews.
 - **0.7.1**: Tile Grid `Select Controller` button; controller and preview cube are clearly separated in the panel.

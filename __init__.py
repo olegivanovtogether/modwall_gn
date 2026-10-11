@@ -1,7 +1,7 @@
 bl_info = {
     "name": "ModwallGN (Simple Tile Cutter)",
     "author": "Oleh Strykitchenko",
-    "version": (0, 7, 3),
+    "version": (0, 7, 4),
     "blender": (4, 5, 0),
     "location": "View3D > Sidebar > ModwallGN",
     "description": "Alpha tool for a focused mobile-game asset workflow: cut meshes into tile-sized sections and project UVs from a reference tile",
@@ -61,12 +61,12 @@ classes = (
     ops_vertex_paint.TC_OT_ExitVertexPaintMode,
     ops_vertex_paint.TC_OT_FillVertexPaintColor,
     panels.TC_PT_Main,
-    panels.TC_PT_TileSetup,
+    panels.TC_PT_Setup,
     panels.TC_PT_TileLayers,
-    panels.TC_PT_TileApply,
     panels.TC_PT_CylinderTab,
     panels.TC_PT_UVWTab,
     panels.TC_PT_UVWLayers,
+    panels.TC_PT_Apply,
     panels.TC_PT_VertexPaintTab,
 )
 

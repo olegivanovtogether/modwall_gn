@@ -10,8 +10,8 @@ from .uvw import _apply_uvw_box_uv, _apply_uvw_cylinder_uv, _apply_uvw_planar_uv
 
 class TC_OT_SelectUVWGizmo(Operator):
     bl_idname = "tilecutter.select_uvw_gizmo"
-    bl_label = "Select / Create UVW Gizmo"
-    bl_description = "Select the UVW Gizmo object for move / rotate / scale"
+    bl_label = "Select Controller"
+    bl_description = "Select the controller (UVW Gizmo) to move / rotate / scale it, creating it first if it does not exist"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -49,7 +49,7 @@ class TC_OT_ApplyUVWMap(Operator):
 
         gizmo = s.uvw_gizmo
         if gizmo is None:
-            self.report({'WARNING'}, "UVW Gizmo not found — use 'Select / Create UVW Gizmo' first")
+            self.report({'WARNING'}, "UVW Gizmo not found: press 'Select Controller' first")
             return {'CANCELLED'}
 
         b_min, b_max = get_tile_bounds(ref_tile)
