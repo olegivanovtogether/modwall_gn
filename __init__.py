@@ -77,46 +77,115 @@ def _tc_load_post(_dummy=None):
     _sync_axis_memory()
 
 
-def register():
-    if hasattr(bpy.types.Scene, "tc_settings"):
-        del bpy.types.Scene.tc_settings
-    for cls in classes:
-        # Panels are exposed under their bl_idname, other classes by class name.
-        existing = getattr(bpy.types, getattr(cls, "bl_idname", "") or "", None)
-        if existing is None or existing is cls:
-            existing = getattr(bpy.types, cls.__name__, None)
-        if existing is not None:
-            try:
-                bpy.utils.unregister_class(existing)
-            except Exception:
-                pass
-        bpy.utils.register_class(cls)
-    bpy.types.Scene.tc_settings = PointerProperty(type=props.TC_Settings)
-    panels.register_tab_property()
-    # Drop a handler left by an earlier copy of this module (reload without
-    # unregister), then add the current one.
+def _is_ours(obj):
+    """True for objects defined in this package (any copy of it, so classes
+    and handlers left by an older load of the same package are found too)."""
+    module = getattr(obj, "__module__", "") or ""
+    return module == __package__ or module.startswith(__package__ + ".")
+
+
+def _all_subclasses(base):
+    """All direct and indirect subclasses (type.__subclasses__ is shallow)."""
+    seen, stack = [], list(base.__subclasses__())
+    while stack:
+        cls = stack.pop()
+        if cls in seen:
+            continue
+        seen.append(cls)
+        stack.extend(cls.__subclasses__())
+    return seen
+
+
+def _remove_load_handlers():
     for h in list(bpy.app.handlers.load_post):
-        if getattr(h, "__name__", "") == "_tc_load_post":
+        if getattr(h, "__name__", "") == "_tc_load_post" and _is_ours(h):
             bpy.app.handlers.load_post.remove(h)
-    bpy.app.handlers.load_post.append(_tc_load_post)
+
+
+def _delete_scene_settings():
+    if not hasattr(bpy.types.Scene, "tc_settings"):
+        return
+    prop = bpy.types.Scene.bl_rna.properties.get("tc_settings")
+    fixed = getattr(prop, "fixed_type", None)
+    # Another add-on could own a property with this name; only ours is a
+    # pointer to the TC_Settings group.
+    if fixed is None or getattr(fixed, "identifier", "") != "TC_Settings":
+        return
+    del bpy.types.Scene.tc_settings
+
+
+def _unregister_registered_classes():
+    """Unregister every class of this add-on that is currently registered.
+
+    Blender does not expose registered classes through bpy.types.<name>, so
+    they are found by scanning the subclasses of the Blender base types and
+    keeping only classes defined in this package. That also catches classes
+    left by an older copy of the module (reload without unregister).
+    Returns a list of error strings for classes that could not be removed.
+    """
+    found = list(classes)
+    for base in (bpy.types.PropertyGroup, bpy.types.Operator, bpy.types.Panel):
+        for sub in _all_subclasses(base):
+            if _is_ours(sub) and sub not in found:
+                found.append(sub)
+    errors = []
+    for cls in reversed(found):
+        if not getattr(cls, "is_registered", False):
+            continue   # nothing to do
+        try:
+            bpy.utils.unregister_class(cls)
+        except Exception as exc:
+            errors.append(f"{cls.__name__}: {exc}")
+    return errors
+
+
+def _unregister_all():
+    """Safe to call at any time and any number of times. Every step runs even
+    if an earlier one failed; returns the list of problems."""
+    errors = []
+    for step in (_remove_load_handlers,
+                 panels.unregister_tab_property,
+                 _delete_scene_settings,
+                 _unregister_registered_classes):
+        try:
+            result = step()
+            if result:
+                errors.extend(result)
+        except Exception as exc:
+            errors.append(f"{step.__name__}: {exc}")
+    return errors
+
+
+def register():
+    # Start from a clean state so register() can be called repeatedly and
+    # after a reload without an unregister() in between.
+    leftovers = _unregister_all()
+    if leftovers:
+        raise RuntimeError(
+            "modwall_gn: could not clear an earlier registration: "
+            + "; ".join(leftovers))
+    try:
+        for cls in classes:
+            bpy.utils.register_class(cls)
+        bpy.types.Scene.tc_settings = PointerProperty(type=props.TC_Settings)
+        panels.register_tab_property()
+        bpy.app.handlers.load_post.append(_tc_load_post)
+    except Exception as exc:
+        # do not leave a half registered add-on behind
+        problems = _unregister_all()
+        if problems:
+            raise RuntimeError(
+                f"{exc} (rollback also failed: {'; '.join(problems)})") from exc
+        raise
     try:
         _sync_axis_memory()
     except Exception:
-        pass
+        pass   # bpy.data is restricted while the add-on is being enabled
 
 
 def unregister():
-    for h in list(bpy.app.handlers.load_post):
-        if getattr(h, "__name__", "") == "_tc_load_post":
-            bpy.app.handlers.load_post.remove(h)
-    panels.unregister_tab_property()
-    if hasattr(bpy.types.Scene, "tc_settings"):
-        del bpy.types.Scene.tc_settings
-    for cls in reversed(classes):
-        try:
-            bpy.utils.unregister_class(cls)
-        except Exception:
-            pass
+    for problem in _unregister_all():
+        print(f"modwall_gn: unregister problem: {problem}")
 
 
 if __name__ == "__main__":

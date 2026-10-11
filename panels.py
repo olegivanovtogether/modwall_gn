@@ -20,7 +20,7 @@ TABS = (
 
 def register_tab_property():
     """Selected tab is UI state: kept on the window manager, not saved."""
-    bpy.types.WindowManager.tc_active_tab = EnumProperty(
+    bpy.types.WindowManager.modwall_gn_tab = EnumProperty(
         name="Module",
         items=TABS,
         default='TILE_GRID',
@@ -29,8 +29,8 @@ def register_tab_property():
 
 
 def unregister_tab_property():
-    if hasattr(bpy.types.WindowManager, "tc_active_tab"):
-        del bpy.types.WindowManager.tc_active_tab
+    if hasattr(bpy.types.WindowManager, "modwall_gn_tab"):
+        del bpy.types.WindowManager.modwall_gn_tab
 
 
 def _addon_version():
@@ -267,10 +267,10 @@ class TC_PT_Main(Panel):
         # Tab buttons; they wrap onto a second row when the panel is narrow.
         flow = layout.grid_flow(row_major=True, columns=0, even_columns=True, align=True)
         for ident, label, _desc in TABS:
-            flow.prop_enum(wm, "tc_active_tab", ident, text=label)
+            flow.prop_enum(wm, "modwall_gn_tab", ident, text=label)
         layout.separator()
 
-        tab = wm.tc_active_tab
+        tab = wm.modwall_gn_tab
         if tab == 'TILE_GRID':
             _draw_tile_grid(layout, context)
             _draw_tile_grid_apply(layout, context)
