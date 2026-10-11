@@ -60,6 +60,12 @@ classes = (
     ops_vertex_paint.TC_OT_ExitVertexPaintMode,
     ops_vertex_paint.TC_OT_FillVertexPaintColor,
     panels.TC_PT_Main,
+    panels.TC_PT_TileSetup,
+    panels.TC_PT_TileLayers,
+    panels.TC_PT_TileApply,
+    panels.TC_PT_CylinderTab,
+    panels.TC_PT_UVWTab,
+    panels.TC_PT_VertexPaintTab,
 )
 
 

@@ -23,7 +23,7 @@ All plans, open work and bugs live on GitHub, not in this repository:
 
 ## Panels
 
-The sidebar tab `ModwallGN` has one panel with the add-on name and version on top, then a bar of module tabs (one row; two rows of two when the panel is narrow): **Tile Grid**, **Cylinder**, **UVW Map**, **Vertex Paint**. The selected tab shows the controls of that module. The selected tab is UI state and is not saved with the file.
+The sidebar tab `ModwallGN` has one panel with the add-on name and version on top, then a bar of module tabs (one row; two rows of two when the panel is narrow): **Tile Grid**, **Cylinder**, **UVW Map**, **Vertex Paint**. The selected tab shows the controls of that module, each group on its own plate (sub-panel): for Tile Grid these are Setup, Priority layers and Seams / Apply. The selected tab is UI state and is not saved with the file.
 
 ### Tile Grid (tab)
 

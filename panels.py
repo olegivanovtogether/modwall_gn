@@ -41,8 +41,8 @@ def _addon_version():
     return "?"
 
 
-def _draw_tile_grid(layout, context):
-    """Tile Grid tab: inputs, texture direction and priority layers."""
+def _draw_tile_setup(layout, context):
+    """Tile Grid, setup plate: inputs, Projection Box and texture direction."""
     s = context.scene.tc_settings
 
     layout.prop(s, "target_object", icon='MESH_DATA')
@@ -65,7 +65,10 @@ def _draw_tile_grid(layout, context):
     right = row.operator("tilecutter.rotate_texture", text="", icon='LOOP_FORWARDS')
     right.direction = 1
 
-    layout.separator()
+
+def _draw_tile_layers(layout, context):
+    """Tile Grid, layers plate: priority axis and the three layers."""
+    s = context.scene.tc_settings
     layout.prop(s, "use_priority_axis")
     if not s.use_priority_axis:
         layout.label(text="Off: faces near 45 deg may project chaotically",
@@ -86,7 +89,9 @@ def _draw_tile_grid(layout, context):
     layout.separator(factor=1.5)
     box1 = layout.box()
     box1.label(text=f"Layer 1  ·  Top-Bottom  ·  axis {a1}")
-    box1.prop(s, "priority_axis", expand=True)
+    axis_row = box1.row(align=True)
+    for ax in _AXIS_ORDER:
+        axis_row.prop_enum(s, "priority_axis", ax)
     row = box1.row(align=True)
     row.prop(s, "priority_angle_from")
     row.prop(s, "priority_angle_to")
@@ -295,15 +300,87 @@ class TC_PT_Main(Panel):
             flow.scale_y = 1.2
             for ident, label, _desc in TABS:
                 flow.prop_enum(wm, "modwall_gn_tab", ident, text=label)
-        layout.separator()
 
-        tab = wm.modwall_gn_tab
-        if tab == 'TILE_GRID':
-            _draw_tile_grid(layout, context)
-            _draw_tile_grid_apply(layout, context)
-        elif tab == 'CYLINDER':
-            _draw_cylinder(layout, context)
-        elif tab == 'UVW':
-            _draw_uvw(layout, context)
-        elif tab == 'VERTEX_PAINT':
-            _draw_vertex_paint(layout, context)
+
+def _tab_is(context, tab):
+    return context.window_manager.modwall_gn_tab == tab
+
+
+class _TabPlate:
+    """Common settings of the plates (sub-panels) shown under the tab bar."""
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = 'ModwallGN'
+    bl_parent_id = "TC_PT_MAIN"
+
+
+class TC_PT_TileSetup(_TabPlate, Panel):
+    bl_label = "Setup"
+    bl_idname = "TC_PT_TILE_SETUP"
+
+    @classmethod
+    def poll(cls, context):
+        return _tab_is(context, 'TILE_GRID')
+
+    def draw(self, context):
+        _draw_tile_setup(self.layout, context)
+
+
+class TC_PT_TileLayers(_TabPlate, Panel):
+    bl_label = "Priority layers"
+    bl_idname = "TC_PT_TILE_LAYERS"
+
+    @classmethod
+    def poll(cls, context):
+        return _tab_is(context, 'TILE_GRID')
+
+    def draw(self, context):
+        _draw_tile_layers(self.layout, context)
+
+
+class TC_PT_TileApply(_TabPlate, Panel):
+    bl_label = "Seams / Apply"
+    bl_idname = "TC_PT_TILE_APPLY"
+
+    @classmethod
+    def poll(cls, context):
+        return _tab_is(context, 'TILE_GRID')
+
+    def draw(self, context):
+        _draw_tile_grid_apply(self.layout, context)
+
+
+class TC_PT_CylinderTab(_TabPlate, Panel):
+    bl_label = "Cylinder Projection"
+    bl_idname = "TC_PT_CYLINDER_TAB"
+
+    @classmethod
+    def poll(cls, context):
+        return _tab_is(context, 'CYLINDER')
+
+    def draw(self, context):
+        _draw_cylinder(self.layout, context)
+
+
+class TC_PT_UVWTab(_TabPlate, Panel):
+    bl_label = "UVW Map Projection"
+    bl_idname = "TC_PT_UVW_TAB"
+
+    @classmethod
+    def poll(cls, context):
+        return _tab_is(context, 'UVW')
+
+    def draw(self, context):
+        _draw_uvw(self.layout, context)
+
+
+class TC_PT_VertexPaintTab(_TabPlate, Panel):
+    bl_label = "Vertex Paint Tools"
+    bl_idname = "TC_PT_VERTEX_PAINT_TAB"
+
+    @classmethod
+    def poll(cls, context):
+        return _tab_is(context, 'VERTEX_PAINT')
+
+    def draw(self, context):
+        _draw_vertex_paint(self.layout, context)
