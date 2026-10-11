@@ -4,7 +4,7 @@
 
 Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, reference-tile material transfer and vertex color painting helpers.
 
-- Version: `0.7.2` (alpha)
+- Version: `0.7.3` (alpha)
 - Blender: 4.5.0+
 - Location: `View3D > Sidebar > ModwallGN`
 - Category: Mesh
@@ -55,7 +55,9 @@ Faces whose normal sits near 45 degrees between two Projection Box axes used to 
 
 1. **Layer 1**: axis `X | Y | Z` (default `Z`), angle `From / To` (default 0 / 50 degrees) between the face normal and the axis, sign ignored, boundary included. Faces in range always project along this axis.
 2. **Layer 2** (own checkbox, default on): one of the two remaining axes (default `X`), own `From / To` (0 / 50). Applies only to faces not caught by layer 1.
-3. **Layer 3** (own checkbox, default on): the last remaining axis. It takes every face not caught by layers 1 and 2.
+3. **Layer 3** (own checkbox, default on): the fallback for faces not caught by the ranges of layers 1 and 2. Such a face goes to the **nearest** of the three axes; when two or three axes are exactly equally near (a bevelled cube corner is 54.7 degrees from all three), the **higher layer wins**. Its Flip settings are those of the layer that owns the chosen axis.
+
+Notes: `From / To` is a range in which the axis is forced; it does not ban the axis outside it (a face nearer to the axis than `From` is still chosen by the nearest-axis rule). Layer 3 is therefore the nearest-axis fallback, not "everything that is left". With layer 2 or layer 3 off, or with `Priority Axis` off, the old nearest-axis rule is used.
 
 Each layer has **Flip Back Faces**: the faces of that layer that look away from the axis are turned over (U mirrored), like gluing the paper on its other side. Off = straight-through projection. Defaults: layer 1 off, layers 2 and 3 on.
 
@@ -137,6 +139,7 @@ See the issue tracker for the current state of each item.
 
 ## Changelog
 
+- **0.7.3**: priority layers fixed for faces between the axes: outside the ranges of layers 1 and 2 a face goes to the nearest axis and an exact tie (e.g. a bevelled cube corner, 54.7 deg to all three axes) goes to the higher layer instead of the lowest one. Applies to Tile Grid and UVW Box.
 - **0.7.2**: UVW Map (Box) gets the same priority layers, Flip Back Faces with side and texture direction as Tile Grid (own `uvw_*` settings, on by default), live gizmo preview follows them; reversible cell width/height swap; angle ranges refresh the previews.
 - **0.7.1**: Tile Grid `Select Controller` button; controller and preview cube are clearly separated in the panel.
 - **0.7.0**: code split into modules; single panel `ModwallGN` with module tabs and plates; name `ModwallGN (Simple Tile Cutter)`; safe register / unregister / reload.

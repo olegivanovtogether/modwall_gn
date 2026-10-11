@@ -147,7 +147,22 @@ def _choose_axis_and_flip(fn, layers, ax_x, ax_y, ax_z):
             if lo <= angle_tenths(fn_u, a2) <= hi:
                 return a2, layers['flip2'], 1e-4, layers['opp2']
             if layers['use3']:
-                return a3, layers['flip3'], 1e-4, layers['opp3']
+                # Outside both ranges: the axis the face is nearest to wins.
+                # An exact tie (e.g. a cube corner, 54.7 deg to all three
+                # axes) goes to the higher priority layer, never to the
+                # lowest one.
+                candidates = (
+                    (angle_tenths(fn_u, a1), 0, a1),
+                    (angle_tenths(fn_u, a2), 1, a2),
+                    (angle_tenths(fn_u, a3), 2, a3),
+                )
+                _, order, axis = min(candidates)
+                flip, opp = (
+                    (layers['flip1'], layers['opp1']),
+                    (layers['flip2'], layers['opp2']),
+                    (layers['flip3'], layers['opp3']),
+                )[order]
+                return axis, flip, 1e-4, opp
 
     # Legacy rule: which box face is this mesh face most parallel to?
     dot_x = abs(fn.dot(ax_x))
@@ -180,7 +195,8 @@ def _apply_tile_uvs(bm, b_min, b_max, tile_u, tile_v,
                              1 and 2 use the legacy rule
       flip1, flip2, flip3    bool, "Flip Back Faces" per layer
     Angle = angle between the face normal and the axis, sign ignored. Order:
-    layer 1, then layer 2, then the remaining axis a3 (layer 3).
+    layer 1 range, layer 2 range, then (layer 3 on) the axis nearest to the
+    face, exact ties going to the higher layer.
     """
     uv_layer = bm.loops.layers.uv.get("UVMap") or bm.loops.layers.uv.new("UVMap")
     tile_u = max(tile_u, 0.001)
