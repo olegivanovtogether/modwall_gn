@@ -4,7 +4,7 @@
 
 Blender addon (4.5+) for a focused mobile-game asset workflow: tile-based UV projection, mesh cutting, reference-tile material transfer and vertex color painting helpers.
 
-- Version: `0.7.0` (alpha)
+- Version: `0.7.1` (alpha)
 - Blender: 4.5.0+
 - Location: `View3D > Sidebar > ModwallGN`
 - Category: Mesh
@@ -130,6 +130,15 @@ Helper panel for painting vertex colors on the active mesh without leaving the s
 - Rectangular tiles are supported, but square tiles remain the production-safe path.
 
 See the issue tracker for the current state of each item.
+
+## Changelog
+
+- **0.7.1**: Tile Grid `Select Controller` button; controller and preview cube are clearly separated in the panel.
+- **0.7.0**: code split into modules; single panel `ModwallGN` with module tabs and plates; name `ModwallGN (Simple Tile Cutter)`; safe register / unregister / reload.
+- **0.6.14**: layers swap axes; flip side labels by layer role (Top-Bottom, Front-Back, Left-Right).
+- **0.6.13**: `Flip side` per layer (floor or ceiling), layers as separate boxes.
+- **0.6.12**: texture direction 0 / 90 / 180 / 270.
+- **0.6.11 and earlier**: three priority layers with Flip Back Faces and live preview, vertex paint tools, UVW Map, Cylinder Projection.
 
 ## Installation
 
